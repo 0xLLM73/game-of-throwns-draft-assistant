@@ -22,9 +22,9 @@
 #got-draft-assistant-host .got-model-row { display: flex; flex-direction: column; gap: 6px; margin: -2px 12px 10px; color: #94a3b8; font-size: 11px; }
 #got-draft-assistant-host .got-model-row label { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 #got-draft-assistant-host .got-model, #got-draft-assistant-host .got-position { min-width: 184px; padding: 5px 7px; border: 1px solid #475569; border-radius: 7px; color: #e2e8f0; background: #111c2e; font: inherit; }
-#got-draft-assistant-host .got-strategy-row { display: flex; align-items: center; gap: 8px; margin: -2px 12px 12px; padding: 8px 10px; border: 1px solid #475569; border-radius: 9px; color: #94a3b8; background: #111c2e; font-size: 10px; }
-#got-draft-assistant-host .got-early-block-toggle { min-height: 34px; border: 1px solid #64748b; border-radius: 7px; padding: 6px 9px; color: #e2e8f0; background: #1e293b; font-size: 11px; font-weight: 800; }
-#got-draft-assistant-host .got-early-block-toggle[aria-pressed="true"] { border-color: #f97316; color: #431407; background: #fb923c; }
+#got-draft-assistant-host .got-strategy-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: -2px 12px 12px; padding: 8px 10px; border: 1px solid #475569; border-radius: 9px; color: #94a3b8; background: #111c2e; font-size: 10px; }
+#got-draft-assistant-host .got-early-block-toggle, #got-draft-assistant-host .got-early-one-toggle { flex: 1 1 150px; min-height: 34px; border: 1px solid #64748b; border-radius: 7px; padding: 6px 9px; color: #e2e8f0; background: #1e293b; font-size: 11px; font-weight: 800; }
+#got-draft-assistant-host .got-early-block-toggle[aria-pressed="true"], #got-draft-assistant-host .got-early-one-toggle[aria-pressed="true"] { border-color: #f97316; color: #431407; background: #fb923c; }
 #got-draft-assistant-host .got-strategy-row.got-strategy-active { border-color: #f97316; color: #fed7aa; }
 #got-draft-assistant-host .got-auto-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: -2px 12px 12px; padding: 8px 10px; border: 1px solid #475569; border-radius: 9px; color: #94a3b8; background: #111c2e; font-size: 11px; }
 #got-draft-assistant-host .got-auto-row label { display: flex; align-items: center; gap: 5px; white-space: nowrap; }

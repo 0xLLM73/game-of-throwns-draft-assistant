@@ -11,6 +11,7 @@
     suggestionPosition: "ALL",
     rbPreference: 1,
     earlyQbTeBlockEnabled: false,
+    earlyQbTeOneTotalEnabled: false,
     ecrWeight: 0.55,
     vegasWeight: 0.45,
     autoDraftEnabled: false,
@@ -164,10 +165,12 @@
     return benchNeeded <= config.benchSlots;
   }
 
-  function isEarlyQbTeBlocked(positionValue, round, config) {
-    if (!config.earlyQbTeBlockEnabled || round > 8) return false;
+  function isEarlyQbTeBlocked(positionValue, round, config, rosterCounts = {}) {
+    if (round > 8) return false;
     const position = positionKey(positionValue);
-    return position === "QB" || position === "TE";
+    if (position !== "QB" && position !== "TE") return false;
+    if (config.earlyQbTeBlockEnabled) return true;
+    return Boolean(config.earlyQbTeOneTotalEnabled && (rosterCounts.QB || 0) + (rosterCounts.TE || 0) >= 1);
   }
 
   function replacementPoints(players, config) {
@@ -434,7 +437,7 @@
     const candidates = players
       .filter((player) => !drafted.has(normalizeName(player.name)))
       .filter((player) => canDraftPosition(player.position, rosterCounts, config))
-      .filter((player) => !isEarlyQbTeBlocked(player.position, round, config))
+      .filter((player) => !isEarlyQbTeBlocked(player.position, round, config, rosterCounts))
       .map((player) => {
         const position = positionKey(player.position);
         if (position === "K" || position === "DST") {
@@ -541,7 +544,7 @@
     return players
       .filter((player) => !drafted.has(normalizeName(player.name)))
       .filter((player) => canDraftPosition(player.position, rosterCounts, config))
-      .filter((player) => !isEarlyQbTeBlocked(player.position, round, config))
+      .filter((player) => !isEarlyQbTeBlocked(player.position, round, config, rosterCounts))
       .map((player) => {
         const position = positionKey(player.position);
         const replacement = replacements[position];

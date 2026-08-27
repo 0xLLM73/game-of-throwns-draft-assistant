@@ -270,3 +270,26 @@ test("optionally blocks QB and TE through round eight without changing model wei
     assert.ok(unblocked.some((player) => player.position === "TE"), `${rankingModel} should restore TE in round 9`);
   }
 });
+
+test("optionally allows only one combined QB or TE through round eight", () => {
+  const config = { ...engine.DEFAULT_CONFIG, earlyQbTeOneTotalEnabled: true };
+  assert.equal(engine.isEarlyQbTeBlocked("QB", 8, config, {}), false);
+  assert.equal(engine.isEarlyQbTeBlocked("TE", 8, config, {}), false);
+  assert.equal(engine.isEarlyQbTeBlocked("QB", 8, config, { TE: 1 }), true);
+  assert.equal(engine.isEarlyQbTeBlocked("TE", 8, config, { QB: 1 }), true);
+  assert.equal(engine.isEarlyQbTeBlocked("QB", 9, config, { TE: 1 }), false);
+  assert.equal(engine.isEarlyQbTeBlocked("TE", 9, config, { QB: 1 }), false);
+
+  const players = [
+    { name: "Quarterback", position: "QB", fantasyProsRank: 1, vegasPoints: 400, draftSharks3dValue: 100 },
+    { name: "Tight End", position: "TE", fantasyProsRank: 2, vegasPoints: 250, draftSharks3dValue: 100 },
+    { name: "Running Back", position: "RB", fantasyProsRank: 3, vegasPoints: 200, draftSharks3dValue: 80 },
+  ];
+  for (const rosterPosition of ["QB", "TE"]) {
+    const ranked = engine.rankPlayers(players, {
+      currentPick: 71,
+      roster: [{ name: `Rostered ${rosterPosition}`, position: rosterPosition }],
+    }, { teams: 10, draftSlot: 1, rankingModel: "sharp-value", earlyQbTeOneTotalEnabled: true });
+    assert.ok(ranked.every((player) => !["QB", "TE"].includes(player.position)));
+  }
+});

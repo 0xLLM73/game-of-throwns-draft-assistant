@@ -16,6 +16,7 @@
     ...(stored.draftAssistantConfig || {}),
     rosterMax: { ...engine.DEFAULT_CONFIG.rosterMax },
   };
+  if (config.earlyQbTeBlockEnabled) config.earlyQbTeOneTotalEnabled = false;
   if (!Number.isFinite(config.autoDraftMinSeconds)) config.autoDraftMinSeconds = Math.min(55, Math.max(5, Number(config.autoDraftSeconds) || 5));
   if (!Number.isFinite(config.autoDraftMaxSeconds)) config.autoDraftMaxSeconds = 30;
   let manualDrafted = stored.manualDrafted || [];
@@ -86,7 +87,8 @@
         </div>
         <div class="got-strategy-row">
           <button class="got-early-block-toggle" type="button" aria-pressed="false">Block QB/TE through Round 8</button>
-          <span>Optional mock-draft rule; rankings stay unchanged.</span>
+          <button class="got-early-one-toggle" type="button" aria-pressed="false">Allow only one QB or TE through Round 8</button>
+          <span>Optional mock-draft rules; choose at most one. Rankings stay unchanged.</span>
         </div>
         <div class="got-auto-row">
           <button class="got-auto-toggle" type="button" aria-pressed="false">Arm auto-draft</button>
@@ -115,6 +117,7 @@
   const modelSelect = $(".got-model");
   const positionSelect = $(".got-position");
   const earlyBlockToggle = $(".got-early-block-toggle");
+  const earlyOneToggle = $(".got-early-one-toggle");
   const autoDraftToggle = $(".got-auto-toggle");
   const autoDraftMinInput = $(".got-auto-min");
   const autoDraftMaxInput = $(".got-auto-max");
@@ -734,7 +737,11 @@
       ? "QB/TE blocked through Round 8"
       : "Block QB/TE through Round 8";
     earlyBlockToggle.setAttribute("aria-pressed", String(Boolean(config.earlyQbTeBlockEnabled)));
-    $(".got-strategy-row").classList.toggle("got-strategy-active", Boolean(config.earlyQbTeBlockEnabled));
+    earlyOneToggle.textContent = config.earlyQbTeOneTotalEnabled
+      ? "One QB/TE total allowed through Round 8"
+      : "Allow only one QB or TE through Round 8";
+    earlyOneToggle.setAttribute("aria-pressed", String(Boolean(config.earlyQbTeOneTotalEnabled)));
+    $(".got-strategy-row").classList.toggle("got-strategy-active", Boolean(config.earlyQbTeBlockEnabled || config.earlyQbTeOneTotalEnabled));
     $("footer").textContent = `${dataset.meta.generatedAt.slice(0, 10)} snapshot · local rankings`;
     void maybeAutoDraft(espn, overallBest).catch(() => {
       schedulerError = "background trigger unavailable";
@@ -784,7 +791,15 @@
     render();
   });
   earlyBlockToggle.addEventListener("click", () => {
-    config = { ...config, earlyQbTeBlockEnabled: !config.earlyQbTeBlockEnabled };
+    const earlyQbTeBlockEnabled = !config.earlyQbTeBlockEnabled;
+    config = { ...config, earlyQbTeBlockEnabled, earlyQbTeOneTotalEnabled: earlyQbTeBlockEnabled ? false : config.earlyQbTeOneTotalEnabled };
+    clearAutoTriggerForPick(lastState?.currentPick);
+    saveConfig();
+    render();
+  });
+  earlyOneToggle.addEventListener("click", () => {
+    const earlyQbTeOneTotalEnabled = !config.earlyQbTeOneTotalEnabled;
+    config = { ...config, earlyQbTeOneTotalEnabled, earlyQbTeBlockEnabled: earlyQbTeOneTotalEnabled ? false : config.earlyQbTeBlockEnabled };
     clearAutoTriggerForPick(lastState?.currentPick);
     saveConfig();
     render();
