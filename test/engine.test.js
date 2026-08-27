@@ -243,3 +243,30 @@ test("applies a small RB preference across every ranking model", () => {
   assert.equal(engine.rbPriorityAdjustment("WR", "think-rmv"), 0);
   assert.equal(engine.rbPriorityAdjustment("RB", "sharp-value", 0), 0);
 });
+
+test("optionally blocks QB and TE through round eight without changing model weights", () => {
+  const players = [
+    { name: "Quarterback", position: "QB", fantasyProsRank: 1, vegasPoints: 400, draftSharks3dValue: 100 },
+    { name: "Tight End", position: "TE", fantasyProsRank: 2, vegasPoints: 250, draftSharks3dValue: 100 },
+    { name: "Running Back", position: "RB", fantasyProsRank: 3, vegasPoints: 200, draftSharks3dValue: 80 },
+    { name: "Wide Receiver", position: "WR", fantasyProsRank: 4, vegasPoints: 190, draftSharks3dValue: 75 },
+  ];
+  for (const rankingModel of ["think-rmv", "sharp-value", "vegas-sharks-80", "vegas-only", "balanced-v04"]) {
+    const blocked = engine.rankPlayers(players, { currentPick: 71, roster: [] }, {
+      teams: 10,
+      draftSlot: 1,
+      rankingModel,
+      earlyQbTeBlockEnabled: true,
+    });
+    assert.ok(blocked.every((player) => !["QB", "TE"].includes(player.position)), `${rankingModel} should block QB/TE in round 8`);
+
+    const unblocked = engine.rankPlayers(players, { currentPick: 81, roster: [] }, {
+      teams: 10,
+      draftSlot: 1,
+      rankingModel,
+      earlyQbTeBlockEnabled: true,
+    });
+    assert.ok(unblocked.some((player) => player.position === "QB"), `${rankingModel} should restore QB in round 9`);
+    assert.ok(unblocked.some((player) => player.position === "TE"), `${rankingModel} should restore TE in round 9`);
+  }
+});

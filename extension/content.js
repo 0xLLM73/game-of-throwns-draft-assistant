@@ -84,6 +84,10 @@
             </select>
           </label>
         </div>
+        <div class="got-strategy-row">
+          <button class="got-early-block-toggle" type="button" aria-pressed="false">Block QB/TE through Round 8</button>
+          <span>Optional mock-draft rule; rankings stay unchanged.</span>
+        </div>
         <div class="got-auto-row">
           <button class="got-auto-toggle" type="button" aria-pressed="false">Arm auto-draft</button>
           <label>draft with <input class="got-auto-min" type="number" min="5" max="55" step="1" aria-label="Minimum auto-draft seconds remaining">–<input class="got-auto-max" type="number" min="5" max="55" step="1" aria-label="Maximum auto-draft seconds remaining"> sec left</label>
@@ -110,6 +114,7 @@
   const slotInput = $(".got-slot");
   const modelSelect = $(".got-model");
   const positionSelect = $(".got-position");
+  const earlyBlockToggle = $(".got-early-block-toggle");
   const autoDraftToggle = $(".got-auto-toggle");
   const autoDraftMinInput = $(".got-auto-min");
   const autoDraftMaxInput = $(".got-auto-max");
@@ -725,6 +730,11 @@
     $(".got-auto-row").classList.toggle("got-auto-blocked", Boolean(espn.isEspnAutopickEnabled));
     autoDraftToggle.textContent = config.autoDraftEnabled ? "Disarm auto-draft" : "Arm auto-draft";
     autoDraftToggle.setAttribute("aria-pressed", String(Boolean(config.autoDraftEnabled)));
+    earlyBlockToggle.textContent = config.earlyQbTeBlockEnabled
+      ? "QB/TE blocked through Round 8"
+      : "Block QB/TE through Round 8";
+    earlyBlockToggle.setAttribute("aria-pressed", String(Boolean(config.earlyQbTeBlockEnabled)));
+    $(".got-strategy-row").classList.toggle("got-strategy-active", Boolean(config.earlyQbTeBlockEnabled));
     $("footer").textContent = `${dataset.meta.generatedAt.slice(0, 10)} snapshot · local rankings`;
     void maybeAutoDraft(espn, overallBest).catch(() => {
       schedulerError = "background trigger unavailable";
@@ -770,6 +780,12 @@
       ? positionSelect.value
       : "ALL";
     config = { ...config, suggestionPosition };
+    saveConfig();
+    render();
+  });
+  earlyBlockToggle.addEventListener("click", () => {
+    config = { ...config, earlyQbTeBlockEnabled: !config.earlyQbTeBlockEnabled };
+    clearAutoTriggerForPick(lastState?.currentPick);
     saveConfig();
     render();
   });

@@ -10,6 +10,7 @@
     rankingModel: "sharp-value",
     suggestionPosition: "ALL",
     rbPreference: 1,
+    earlyQbTeBlockEnabled: false,
     ecrWeight: 0.55,
     vegasWeight: 0.45,
     autoDraftEnabled: false,
@@ -161,6 +162,12 @@
     const nextCounts = { ...rosterCounts, [position]: currentAtPosition + 1 };
     const benchNeeded = rostered + 1 - maxStarterAssignments(nextCounts, config);
     return benchNeeded <= config.benchSlots;
+  }
+
+  function isEarlyQbTeBlocked(positionValue, round, config) {
+    if (!config.earlyQbTeBlockEnabled || round > 8) return false;
+    const position = positionKey(positionValue);
+    return position === "QB" || position === "TE";
   }
 
   function replacementPoints(players, config) {
@@ -427,6 +434,7 @@
     const candidates = players
       .filter((player) => !drafted.has(normalizeName(player.name)))
       .filter((player) => canDraftPosition(player.position, rosterCounts, config))
+      .filter((player) => !isEarlyQbTeBlocked(player.position, round, config))
       .map((player) => {
         const position = positionKey(player.position);
         if (position === "K" || position === "DST") {
@@ -533,6 +541,7 @@
     return players
       .filter((player) => !drafted.has(normalizeName(player.name)))
       .filter((player) => canDraftPosition(player.position, rosterCounts, config))
+      .filter((player) => !isEarlyQbTeBlocked(player.position, round, config))
       .map((player) => {
         const position = positionKey(player.position);
         const replacement = replacements[position];
@@ -639,6 +648,7 @@
     rbPriorityAdjustment,
     maxStarterAssignments,
     canDraftPosition,
+    isEarlyQbTeBlocked,
     rankPlayers,
   };
 })(globalThis);

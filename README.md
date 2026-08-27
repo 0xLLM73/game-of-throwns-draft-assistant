@@ -29,6 +29,8 @@ All models retain the same ESPN synchronization, legal-roster filters, auto-draf
 
 All five models apply a small RB close-call preference. It is worth 0.025 in normalized-score models and 1.5 point-equivalents in Think RMV—enough to favor an RB over a nearly equal WR, but not enough to override a materially stronger player or the soft RB/WR bench-balance controls. In the Vegas-only model, Vegas remains the sole player-data source; this is a league-position adjustment rather than another projection source.
 
+The optional **Block QB/TE through Round 8** button is an eligibility experiment for mock drafts. When enabled, QB and TE are removed from manual recommendations and automatic best-pick selection during rounds 1–8, then restored automatically in round 9. It does not modify any ranking-model weights or player scores, defaults to off, and persists locally until toggled again.
+
 When your team is on the clock, the overlay provides a one-click Draft button for both the top recommendation and each of the four alternatives. Manual alternative picks use the same fresh-state validation, cross-tab action lock, ESPN identity check, and search cleanup as the best-pick action. Automatic drafting always selects only the top recommendation.
 
 The Suggestions selector can show the top five overall players or filter the board to QB, RB, WR, TE, D/ST, or K. Position filtering affects only the displayed manual choices; automatic drafting continues to use the unfiltered overall top recommendation.
