@@ -1,0 +1,30 @@
+(async function options() {
+  const defaults = globalThis.DraftAssistantEngine.DEFAULT_CONFIG;
+  const stored = await chrome.storage.local.get("draftAssistantConfig");
+  const config = {
+    ...defaults,
+    ...(stored.draftAssistantConfig || {}),
+    rosterMax: { ...defaults.rosterMax },
+  };
+  const form = document.querySelector("form");
+  form.elements.rankingModel.value = config.rankingModel;
+  form.elements.draftSlot.value = config.draftSlot || "";
+  form.elements.autoDraftMinSeconds.value = config.autoDraftMinSeconds || config.autoDraftSeconds || 5;
+  form.elements.autoDraftMaxSeconds.value = config.autoDraftMaxSeconds || 30;
+  form.elements.autoDraftEnabled.checked = Boolean(config.autoDraftEnabled);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const next = {
+      ...config,
+      rankingModel: ["think-rmv", "sharp-value", "vegas-sharks-80", "vegas-only", "balanced-v04"].includes(form.elements.rankingModel.value)
+        ? form.elements.rankingModel.value
+        : "sharp-value",
+      draftSlot: Number(form.elements.draftSlot.value) || 0,
+      autoDraftEnabled: form.elements.autoDraftEnabled.checked,
+      autoDraftMinSeconds: Math.min(55, Math.max(5, Number(form.elements.autoDraftMinSeconds.value) || 5)),
+      autoDraftMaxSeconds: Math.min(55, Math.max(Number(form.elements.autoDraftMinSeconds.value) || 5, Number(form.elements.autoDraftMaxSeconds.value) || 30)),
+    };
+    await chrome.storage.local.set({ draftAssistantConfig: next });
+    form.querySelector("output").textContent = "Saved locally.";
+  });
+})();

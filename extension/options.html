@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Game of Throwns Draft Assistant</title>
+    <link rel="stylesheet" href="options.css">
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">GAME OF THROWNS</p>
+      <h1>Draft Assistant Settings</h1>
+      <p>Configured for your 10-team, Half-PPR ESPN league. Rankings remain on this computer.</p>
+      <form>
+        <label>Ranking model
+          <select name="rankingModel">
+            <option value="think-rmv">Think · Pro RMV experimental</option>
+            <option value="sharp-value">Sharp value · new</option>
+            <option value="vegas-sharks-80">Vegas 80 / DraftSharks 20 · RB/WR priority</option>
+            <option value="vegas-only">Vegas only · positional value</option>
+            <option value="balanced-v04">Balanced v0.4 · backup</option>
+          </select>
+        </label>
+        <label>Draft slot <input name="draftSlot" type="number" min="1" max="10" placeholder="Randomized one hour before"></label>
+        <label><input name="autoDraftEnabled" type="checkbox"> Arm automatic best-pick fallback</label>
+        <label>Draft with <input name="autoDraftMinSeconds" type="number" min="5" max="55" step="1"> to <input name="autoDraftMaxSeconds" type="number" min="5" max="55" step="1"> seconds remaining</label>
+        <button type="submit">Save settings</button>
+        <output></output>
+      </form>
+    </main>
+    <script src="lib/engine.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>

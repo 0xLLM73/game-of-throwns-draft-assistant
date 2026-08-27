@@ -1,0 +1,13 @@
+.DS_Store
+node_modules/
+
+# Local ranking inputs and generated board are intentionally not redistributed.
+/data/
+extension/data/rankings.json
+scripts/refresh-data.mjs
+test/data.test.js
+
+# Local archives and browser artifacts.
+*.zip
+*.crx
+*.pem

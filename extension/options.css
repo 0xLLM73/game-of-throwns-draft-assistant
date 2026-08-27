@@ -1,0 +1,10 @@
+:root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; background: #08101e; color: #e2e8f0; }
+body { margin: 0; }
+main { width: min(620px, calc(100% - 40px)); margin: 64px auto; }
+.eyebrow { color: #4ade80; font-size: 12px; font-weight: 800; letter-spacing: .16em; }
+h1 { margin: 0 0 8px; }
+form { display: grid; gap: 16px; margin-top: 30px; padding: 24px; border: 1px solid #334155; border-radius: 14px; background: #0f1b2d; }
+label { display: grid; gap: 7px; }
+input, select { padding: 10px; border: 1px solid #475569; border-radius: 8px; background: #111827; color: white; }
+button { width: fit-content; padding: 10px 16px; border: 0; border-radius: 8px; background: #22c55e; color: #052e16; font-weight: 800; cursor: pointer; }
+output { color: #86efac; }

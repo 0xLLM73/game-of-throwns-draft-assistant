@@ -1,0 +1,26 @@
+{
+  "meta": {
+    "generatedAt": "2026-01-01T00:00:00.000Z",
+    "season": 2026,
+    "scoring": "half-ppr",
+    "leagueTeams": 10,
+    "sources": {},
+    "unmatched": {}
+  },
+  "players": [
+    {
+      "id": "example running back|RB",
+      "name": "Example Running Back",
+      "team": "FA",
+      "position": "RB",
+      "fantasyProsRank": 1,
+      "fantasyProsPositionRank": 1,
+      "draftSharks3dValue": 100,
+      "draftSharksProjection": 250,
+      "draftSharksConsensusProjection": 250,
+      "vegasPoints": 250,
+      "espnAdp": 1,
+      "sleeperAdp": 1
+    }
+  ]
+}
