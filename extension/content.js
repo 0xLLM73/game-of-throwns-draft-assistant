@@ -11,14 +11,26 @@
   const dataset = await response.json();
   const playersByName = new Map(dataset.players.map((player) => [engine.normalizeName(player.name), player]));
   const stored = await chrome.storage.local.get(["draftAssistantConfig", "manualDrafted"]);
+  const storedConfig = stored.draftAssistantConfig || {};
   let config = {
     ...engine.DEFAULT_CONFIG,
-    ...(stored.draftAssistantConfig || {}),
+    ...storedConfig,
     rosterMax: { ...engine.DEFAULT_CONFIG.rosterMax },
   };
+  if ((Number(storedConfig.autoDraftWindowVersion) || 0) < engine.DEFAULT_CONFIG.autoDraftWindowVersion) {
+    config.autoDraftMinSeconds = 10;
+    config.autoDraftMaxSeconds = 20;
+    config.autoDraftWindowVersion = engine.DEFAULT_CONFIG.autoDraftWindowVersion;
+    await chrome.storage.local.set({ draftAssistantConfig: config });
+  }
+  if ((Number(storedConfig.rankingModelVersion) || 0) < engine.DEFAULT_CONFIG.rankingModelVersion) {
+    config.rankingModel = "vegas-only";
+    config.rankingModelVersion = engine.DEFAULT_CONFIG.rankingModelVersion;
+    await chrome.storage.local.set({ draftAssistantConfig: config });
+  }
   if (config.earlyQbTeBlockEnabled) config.earlyQbTeOneTotalEnabled = false;
-  if (!Number.isFinite(config.autoDraftMinSeconds)) config.autoDraftMinSeconds = Math.min(55, Math.max(5, Number(config.autoDraftSeconds) || 5));
-  if (!Number.isFinite(config.autoDraftMaxSeconds)) config.autoDraftMaxSeconds = 30;
+  if (!Number.isFinite(config.autoDraftMinSeconds)) config.autoDraftMinSeconds = Math.min(55, Math.max(5, Number(config.autoDraftSeconds) || 10));
+  if (!Number.isFinite(config.autoDraftMaxSeconds)) config.autoDraftMaxSeconds = 20;
   let manualDrafted = stored.manualDrafted || [];
   const draftSessionId = new URL(window.location.href).searchParams.get("leagueId") || "draft";
   const userTeamId = new URL(window.location.href).searchParams.get("teamId") || "unknown";
@@ -88,7 +100,11 @@
         <div class="got-strategy-row">
           <button class="got-early-block-toggle" type="button" aria-pressed="false">Block QB/TE through Round 8</button>
           <button class="got-early-one-toggle" type="button" aria-pressed="false">Allow only one QB or TE through Round 8</button>
-          <span>Optional mock-draft rules; choose at most one. Rankings stay unchanged.</span>
+          <button class="got-five-rb-toggle" type="button" aria-pressed="false">Require 5 RBs in first 6 picks</button>
+          <button class="got-six-rb-toggle" type="button" aria-pressed="false">Require 6 RBs in first 6 picks</button>
+          <button class="got-rb-wr-sequence-toggle" type="button" aria-pressed="false">Draft 6 RBs, then 4 WRs</button>
+          <button class="got-rb-wr-qb-sequence-toggle" type="button" aria-pressed="false">6 RBs → 4 WRs + QB · max 1 QB/TE</button>
+          <span>Optional strategy gates. RB sequence buttons are mutually exclusive and can be combined with one QB/TE rule. Rankings stay unchanged.</span>
         </div>
         <div class="got-auto-row">
           <button class="got-auto-toggle" type="button" aria-pressed="false">Arm auto-draft</button>
@@ -118,6 +134,10 @@
   const positionSelect = $(".got-position");
   const earlyBlockToggle = $(".got-early-block-toggle");
   const earlyOneToggle = $(".got-early-one-toggle");
+  const fiveRbToggle = $(".got-five-rb-toggle");
+  const sixRbToggle = $(".got-six-rb-toggle");
+  const rbWrSequenceToggle = $(".got-rb-wr-sequence-toggle");
+  const rbWrQbSequenceToggle = $(".got-rb-wr-qb-sequence-toggle");
   const autoDraftToggle = $(".got-auto-toggle");
   const autoDraftMinInput = $(".got-auto-min");
   const autoDraftMaxInput = $(".got-auto-max");
@@ -126,8 +146,8 @@
   positionSelect.value = ["ALL", "QB", "RB", "WR", "TE", "DST", "K"].includes(config.suggestionPosition)
     ? config.suggestionPosition
     : "ALL";
-  autoDraftMinInput.value = Math.min(55, Math.max(5, Number(config.autoDraftMinSeconds) || 5));
-  autoDraftMaxInput.value = Math.min(55, Math.max(Number(autoDraftMinInput.value), Number(config.autoDraftMaxSeconds) || 30));
+  autoDraftMinInput.value = Math.min(55, Math.max(5, Number(config.autoDraftMinSeconds) || 10));
+  autoDraftMaxInput.value = Math.min(55, Math.max(Number(autoDraftMinInput.value), Number(config.autoDraftMaxSeconds) || 20));
 
   function escapeHtml(value) {
     return String(value ?? "").replace(/[&<>"']/g, (character) => ({
@@ -145,6 +165,9 @@
     const draftSharks = Number.isFinite(player.draftSharks3dValue) ? `DS 3D ${Math.round(player.draftSharks3dValue)}` : "No DS 3D value";
     const timingAdp = Number.isFinite(player.espnAdp) ? player.espnAdp : player.sleeperAdp;
     const adp = Number.isFinite(timingAdp) ? `${Number.isFinite(player.espnAdp) ? "ESPN" : "Sleeper"} ADP ${timingAdp}` : "No ADP";
+    const availability = player.espnInjuryStatus && player.espnInjuryStatus !== "ACTIVE"
+      ? `<span>ESPN ${escapeHtml(player.espnInjuryStatus)}</span>`
+      : "";
     const metrics = player.rankingModel === "think-rmv"
       ? `<span>RMV ${Number(player.rosterMarginalValue || 0).toFixed(1)}</span><span>Proj ${Number(player.adjustedProjection || 0).toFixed(1)}</span><span>${adp}</span><span>${escapeHtml(player.survivalCategory || "unknown")}</span>`
       : player.rankingModel === "vegas-only"
@@ -154,7 +177,7 @@
         : `<span>${ecr}</span><span>${vegas}</span><span>${adp}</span>`;
     return `
       <div class="got-player-title"><strong>${escapeHtml(player.name)}</strong><span>${escapeHtml(player.team || "FA")} · ${escapeHtml(player.position)}</span></div>
-      <div class="got-metrics">${metrics}</div>
+      <div class="got-metrics">${metrics}${availability}</div>
       <p>${escapeHtml(player.reason)}</p>`;
   }
 
@@ -196,8 +219,8 @@
   }
 
   function autoDraftBounds() {
-    const minimum = Math.min(55, Math.max(5, Number(config.autoDraftMinSeconds) || 5));
-    const maximum = Math.min(55, Math.max(minimum, Number(config.autoDraftMaxSeconds) || 30));
+    const minimum = Math.min(55, Math.max(5, Number(config.autoDraftMinSeconds) || 10));
+    const maximum = Math.min(55, Math.max(minimum, Number(config.autoDraftMaxSeconds) || 20));
     return { minimum, maximum };
   }
 
@@ -242,8 +265,7 @@
   }
 
   function teamKey(team) {
-    const value = String(team || "").toUpperCase();
-    return ({ JAX: "JAC", WAS: "WSH" })[value] || value;
+    return engine.normalizeTeam(team);
   }
 
   function elementIdentity(element) {
@@ -456,8 +478,8 @@
         setDraftAction(`ESPN did not expose one stable identity for ${target.name}; no pick was made.`, "error");
         return "retry";
       }
-      if (draftControl.identity.injuryStatus) {
-        setDraftAction(`${target.name} has ESPN injury status ${draftControl.identity.injuryStatus}; automated drafting is disabled for this player.`, "error");
+      if (engine.isHardUnavailableStatus(draftControl.identity.injuryStatus)) {
+        setDraftAction(`${target.name} has hard ESPN injury status ${draftControl.identity.injuryStatus}; drafting is disabled for this player.`, "error");
         return "blocked";
       }
 
@@ -741,7 +763,34 @@
       ? "One QB/TE total allowed through Round 8"
       : "Allow only one QB or TE through Round 8";
     earlyOneToggle.setAttribute("aria-pressed", String(Boolean(config.earlyQbTeOneTotalEnabled)));
-    $(".got-strategy-row").classList.toggle("got-strategy-active", Boolean(config.earlyQbTeBlockEnabled || config.earlyQbTeOneTotalEnabled));
+    const rosteredRunningBacks = espn.roster.filter((player) => positionKey(player.position) === "RB").length;
+    fiveRbToggle.textContent = config.fiveRbFirstSixEnabled
+      ? `5 RBs in first 6 · ${Math.min(5, rosteredRunningBacks)}/5 rostered`
+      : "Require 5 RBs in first 6 picks";
+    fiveRbToggle.setAttribute("aria-pressed", String(Boolean(config.fiveRbFirstSixEnabled)));
+    sixRbToggle.textContent = config.sixRbFirstSixEnabled
+      ? `6 RBs in first 6 · ${Math.min(6, rosteredRunningBacks)}/6 rostered`
+      : "Require 6 RBs in first 6 picks";
+    sixRbToggle.setAttribute("aria-pressed", String(Boolean(config.sixRbFirstSixEnabled)));
+    const rosteredWideReceivers = espn.roster.filter((player) => positionKey(player.position) === "WR").length;
+    rbWrSequenceToggle.textContent = config.sixRbThenFourWrEnabled
+      ? espn.roster.length < 6
+        ? `6 RBs → 4 WRs · RB ${Math.min(6, rosteredRunningBacks)}/6`
+        : espn.roster.length < 10
+          ? `6 RBs → 4 WRs · WR ${Math.min(4, rosteredWideReceivers)}/4`
+          : "6 RBs → 4 WRs · complete"
+      : "Draft 6 RBs, then 4 WRs";
+    rbWrSequenceToggle.setAttribute("aria-pressed", String(Boolean(config.sixRbThenFourWrEnabled)));
+    const rosteredQuarterbacks = espn.roster.filter((player) => positionKey(player.position) === "QB").length;
+    rbWrQbSequenceToggle.textContent = config.sixRbThenFourWrOneQbEnabled
+      ? espn.roster.length < 6
+        ? `6 RBs → 4 WRs + QB · RB ${Math.min(6, rosteredRunningBacks)}/6`
+        : espn.roster.length < 11
+          ? `4 WRs + QB · WR ${Math.min(4, rosteredWideReceivers)}/4 · QB ${Math.min(1, rosteredQuarterbacks)}/1`
+          : "6 RBs → 4 WRs + QB · complete"
+      : "6 RBs → 4 WRs + QB · max 1 QB/TE";
+    rbWrQbSequenceToggle.setAttribute("aria-pressed", String(Boolean(config.sixRbThenFourWrOneQbEnabled)));
+    $(".got-strategy-row").classList.toggle("got-strategy-active", Boolean(config.earlyQbTeBlockEnabled || config.earlyQbTeOneTotalEnabled || config.fiveRbFirstSixEnabled || config.sixRbFirstSixEnabled || config.sixRbThenFourWrEnabled || config.sixRbThenFourWrOneQbEnabled));
     $("footer").textContent = `${dataset.meta.generatedAt.slice(0, 10)} snapshot · local rankings`;
     void maybeAutoDraft(espn, overallBest).catch(() => {
       schedulerError = "background trigger unavailable";
@@ -777,7 +826,7 @@
   modelSelect.addEventListener("change", () => {
     const rankingModel = ["think-rmv", "sharp-value", "vegas-sharks-80", "vegas-only", "balanced-v04"].includes(modelSelect.value)
       ? modelSelect.value
-      : "sharp-value";
+      : "vegas-only";
     config = { ...config, rankingModel };
     saveConfig();
     render();
@@ -804,6 +853,58 @@
     saveConfig();
     render();
   });
+  fiveRbToggle.addEventListener("click", () => {
+    const fiveRbFirstSixEnabled = !config.fiveRbFirstSixEnabled;
+    config = {
+      ...config,
+      fiveRbFirstSixEnabled,
+      sixRbFirstSixEnabled: fiveRbFirstSixEnabled ? false : config.sixRbFirstSixEnabled,
+      sixRbThenFourWrEnabled: fiveRbFirstSixEnabled ? false : config.sixRbThenFourWrEnabled,
+      sixRbThenFourWrOneQbEnabled: fiveRbFirstSixEnabled ? false : config.sixRbThenFourWrOneQbEnabled,
+    };
+    clearAutoTriggerForPick(lastState?.currentPick);
+    saveConfig();
+    render();
+  });
+  sixRbToggle.addEventListener("click", () => {
+    const sixRbFirstSixEnabled = !config.sixRbFirstSixEnabled;
+    config = {
+      ...config,
+      sixRbFirstSixEnabled,
+      fiveRbFirstSixEnabled: sixRbFirstSixEnabled ? false : config.fiveRbFirstSixEnabled,
+      sixRbThenFourWrEnabled: sixRbFirstSixEnabled ? false : config.sixRbThenFourWrEnabled,
+      sixRbThenFourWrOneQbEnabled: sixRbFirstSixEnabled ? false : config.sixRbThenFourWrOneQbEnabled,
+    };
+    clearAutoTriggerForPick(lastState?.currentPick);
+    saveConfig();
+    render();
+  });
+  rbWrSequenceToggle.addEventListener("click", () => {
+    const sixRbThenFourWrEnabled = !config.sixRbThenFourWrEnabled;
+    config = {
+      ...config,
+      sixRbThenFourWrEnabled,
+      fiveRbFirstSixEnabled: sixRbThenFourWrEnabled ? false : config.fiveRbFirstSixEnabled,
+      sixRbFirstSixEnabled: sixRbThenFourWrEnabled ? false : config.sixRbFirstSixEnabled,
+      sixRbThenFourWrOneQbEnabled: sixRbThenFourWrEnabled ? false : config.sixRbThenFourWrOneQbEnabled,
+    };
+    clearAutoTriggerForPick(lastState?.currentPick);
+    saveConfig();
+    render();
+  });
+  rbWrQbSequenceToggle.addEventListener("click", () => {
+    const sixRbThenFourWrOneQbEnabled = !config.sixRbThenFourWrOneQbEnabled;
+    config = {
+      ...config,
+      sixRbThenFourWrOneQbEnabled,
+      fiveRbFirstSixEnabled: sixRbThenFourWrOneQbEnabled ? false : config.fiveRbFirstSixEnabled,
+      sixRbFirstSixEnabled: sixRbThenFourWrOneQbEnabled ? false : config.sixRbFirstSixEnabled,
+      sixRbThenFourWrEnabled: sixRbThenFourWrOneQbEnabled ? false : config.sixRbThenFourWrEnabled,
+    };
+    clearAutoTriggerForPick(lastState?.currentPick);
+    saveConfig();
+    render();
+  });
   autoDraftToggle.addEventListener("click", () => {
     config = { ...config, autoDraftEnabled: !config.autoDraftEnabled };
     if (config.autoDraftEnabled) clearAutoTriggerForPick(lastState?.currentPick);
@@ -813,8 +914,8 @@
     render();
   });
   function saveAutoBounds() {
-    const minimum = Math.min(55, Math.max(5, Number(autoDraftMinInput.value) || 5));
-    const maximum = Math.min(55, Math.max(minimum, Number(autoDraftMaxInput.value) || 30));
+    const minimum = Math.min(55, Math.max(5, Number(autoDraftMinInput.value) || 10));
+    const maximum = Math.min(55, Math.max(minimum, Number(autoDraftMaxInput.value) || 20));
     autoDraftMinInput.value = minimum;
     autoDraftMaxInput.value = maximum;
     config = { ...config, autoDraftMinSeconds: minimum, autoDraftMaxSeconds: maximum };

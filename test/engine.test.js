@@ -4,6 +4,19 @@ import "../extension/lib/engine.js";
 
 const engine = globalThis.DraftAssistantEngine;
 
+test("defaults draft night to the Vegas-only ranking model", () => {
+  assert.equal(engine.DEFAULT_CONFIG.rankingModel, "vegas-only");
+  assert.equal(engine.DEFAULT_CONFIG.rankingModelVersion, 1);
+});
+
+test("defaults to the 60-second draft auto-pick window", () => {
+  assert.equal(engine.DEFAULT_CONFIG.autoDraftMinSeconds, 10);
+  assert.equal(engine.DEFAULT_CONFIG.autoDraftMaxSeconds, 20);
+  assert.equal(engine.DEFAULT_CONFIG.autoDraftWindowVersion, 2);
+  assert.equal(engine.chooseTriggerSeconds(10, 20, 0), 10);
+  assert.equal(engine.chooseTriggerSeconds(10, 20, 0.999999), 20);
+});
+
 test("chooses an inclusive, bounded auto-draft trigger", () => {
   assert.equal(engine.chooseTriggerSeconds(5, 55, 0), 5);
   assert.equal(engine.chooseTriggerSeconds(5, 55, 0.999999), 55);
@@ -30,6 +43,22 @@ test("uses ESPN-compatible defense search names", () => {
   assert.equal(engine.espnSearchTerm({ name: "Houston Texans", position: "DST" }), "Texans");
   assert.equal(engine.espnSearchTerm({ name: "San Francisco 49ers", position: "D/ST" }), "49ers");
   assert.equal(engine.espnSearchTerm({ name: "Jahmyr Gibbs", position: "RB" }), "Jahmyr Gibbs");
+});
+
+test("allows questionable players but blocks hard ESPN availability states", () => {
+  assert.equal(engine.isHardUnavailableStatus("QUESTIONABLE"), false);
+  assert.equal(engine.isHardUnavailableStatus("Q"), false);
+  for (const status of ["OUT", "O", "DOUBTFUL", "IR", "INJURY_RESERVE", "SUSPENSION", "PUP", "NFI", "INACTIVE"]) {
+    assert.equal(engine.isHardUnavailableStatus(status), true, `${status} should be hard unavailable`);
+  }
+
+  const players = [
+    { name: "Questionable Star", position: "RB", fantasyProsRank: 1, vegasPoints: 250, espnInjuryStatus: "QUESTIONABLE" },
+    { name: "IR Star", position: "RB", fantasyProsRank: 2, vegasPoints: 245, espnInjuryStatus: "INJURY_RESERVE" },
+    { name: "Inactive Star", position: "WR", fantasyProsRank: 3, vegasPoints: 240, espnActive: false },
+  ];
+  const ranked = engine.rankPlayers(players, { currentPick: 1, roster: [] }, { teams: 1, draftSlot: 1 });
+  assert.deepEqual(ranked.map((player) => player.name), ["Questionable Star"]);
 });
 
 test("honors the configured FantasyPros and Vegas source weights", () => {
@@ -118,6 +147,13 @@ test("normalizes ESPN and source name variants", () => {
   assert.equal(engine.normalizeName("Ja'Marr Chase"), engine.normalizeName("JaMarr Chase"));
   assert.equal(engine.normalizeName("D.J. Moore"), engine.normalizeName("DJ Moore"));
   assert.equal(engine.normalizeName("Cameron Ward"), engine.normalizeName("Cam Ward"));
+});
+
+test("normalizes Raiders team abbreviations for ESPN identity matching", () => {
+  assert.equal(engine.normalizeTeam("LVR"), "LV");
+  assert.equal(engine.normalizeTeam("LV"), "LV");
+  assert.equal(engine.normalizeTeam("JAX"), "JAC");
+  assert.equal(engine.normalizeTeam("WAS"), "WSH");
 });
 
 test("calculates the next snake pick for slot three", () => {
@@ -291,5 +327,126 @@ test("optionally allows only one combined QB or TE through round eight", () => {
       roster: [{ name: `Rostered ${rosterPosition}`, position: rosterPosition }],
     }, { teams: 10, draftSlot: 1, rankingModel: "sharp-value", earlyQbTeOneTotalEnabled: true });
     assert.ok(ranked.every((player) => !["QB", "TE"].includes(player.position)));
+  }
+});
+
+test("optionally requires five of the first six roster picks to be running backs", () => {
+  const config = { ...engine.DEFAULT_CONFIG, fiveRbFirstSixEnabled: true };
+  assert.equal(engine.isFiveRbFirstSixBlocked("WR", config, {}), false, "one non-RB may be taken first");
+  assert.equal(engine.isFiveRbFirstSixBlocked("WR", config, { WR: 1 }), true, "a non-RB first pick forces RB thereafter");
+  assert.equal(engine.isFiveRbFirstSixBlocked("QB", config, { RB: 3, WR: 1 }), true, "pick five must be RB when three are rostered");
+  assert.equal(engine.isFiveRbFirstSixBlocked("TE", config, { RB: 4, WR: 1 }), true, "pick six must complete the fifth RB");
+  assert.equal(engine.isFiveRbFirstSixBlocked("WR", config, { RB: 5 }), false, "the requirement is already satisfied");
+  assert.equal(engine.isFiveRbFirstSixBlocked("WR", config, { RB: 5, WR: 1 }), false, "the gate ends after six picks");
+
+  const players = [
+    { name: "Best Wide Receiver", position: "WR", fantasyProsRank: 1, fantasyProsPositionRank: 1, vegasPoints: 300, draftSharks3dValue: 100 },
+    { name: "Required Running Back", position: "RB", fantasyProsRank: 100, fantasyProsPositionRank: 40, vegasPoints: 150, draftSharks3dValue: 40 },
+  ];
+  const roster = [{ name: "Rostered Wide Receiver", position: "WR" }];
+  for (const rankingModel of ["think-rmv", "sharp-value", "vegas-sharks-80", "vegas-only", "balanced-v04"]) {
+    const ranked = engine.rankPlayers(players, { currentPick: 11, roster }, {
+      teams: 10,
+      draftSlot: 1,
+      rankingModel,
+      fiveRbFirstSixEnabled: true,
+    });
+    assert.deepEqual(ranked.map((player) => player.name), ["Required Running Back"], `${rankingModel} should enforce the gate`);
+  }
+});
+
+test("optionally requires all six of the first six roster picks to be running backs", () => {
+  const config = { ...engine.DEFAULT_CONFIG, sixRbFirstSixEnabled: true };
+  assert.equal(engine.isSixRbFirstSixBlocked("WR", config, {}), true);
+  assert.equal(engine.isSixRbFirstSixBlocked("QB", config, { RB: 3 }), true);
+  assert.equal(engine.isSixRbFirstSixBlocked("TE", config, { RB: 5 }), true);
+  assert.equal(engine.isSixRbFirstSixBlocked("WR", config, { RB: 6 }), false, "the gate ends after six picks");
+  assert.equal(engine.isSixRbFirstSixBlocked("RB", config, {}), false);
+
+  const players = [
+    { name: "Best Wide Receiver", position: "WR", fantasyProsRank: 1, fantasyProsPositionRank: 1, vegasPoints: 300, draftSharks3dValue: 100 },
+    { name: "Required Running Back", position: "RB", fantasyProsRank: 100, fantasyProsPositionRank: 40, vegasPoints: 150, draftSharks3dValue: 40 },
+  ];
+  for (const rankingModel of ["think-rmv", "sharp-value", "vegas-sharks-80", "vegas-only", "balanced-v04"]) {
+    const ranked = engine.rankPlayers(players, { currentPick: 1, roster: [] }, {
+      teams: 10,
+      draftSlot: 1,
+      rankingModel,
+      sixRbFirstSixEnabled: true,
+    });
+    assert.deepEqual(ranked.map((player) => player.name), ["Required Running Back"], `${rankingModel} should require RB immediately`);
+  }
+});
+
+test("optionally requires six running backs followed by four wide receivers", () => {
+  const config = { ...engine.DEFAULT_CONFIG, sixRbThenFourWrEnabled: true };
+  assert.equal(engine.isSixRbThenFourWrBlocked("WR", config, {}), true);
+  assert.equal(engine.isSixRbThenFourWrBlocked("RB", config, { RB: 5 }), false);
+  assert.equal(engine.isSixRbThenFourWrBlocked("RB", config, { RB: 6 }), true);
+  assert.equal(engine.isSixRbThenFourWrBlocked("QB", config, { RB: 6, WR: 3 }), true);
+  assert.equal(engine.isSixRbThenFourWrBlocked("WR", config, { RB: 6, WR: 3 }), false);
+  assert.equal(engine.isSixRbThenFourWrBlocked("QB", config, { RB: 6, WR: 4 }), false, "normal eligibility resumes at pick 11");
+
+  const players = [
+    { name: "Quarterback", position: "QB", fantasyProsRank: 1, fantasyProsPositionRank: 1, vegasPoints: 400, draftSharks3dValue: 100 },
+    { name: "Running Back", position: "RB", fantasyProsRank: 20, fantasyProsPositionRank: 10, vegasPoints: 200, draftSharks3dValue: 70 },
+    { name: "Wide Receiver", position: "WR", fantasyProsRank: 30, fantasyProsPositionRank: 12, vegasPoints: 190, draftSharks3dValue: 65 },
+  ];
+  for (const rankingModel of ["think-rmv", "sharp-value", "vegas-sharks-80", "vegas-only", "balanced-v04"]) {
+    const rbStage = engine.rankPlayers(players, { currentPick: 1, roster: [] }, {
+      teams: 10, draftSlot: 1, rankingModel, sixRbThenFourWrEnabled: true,
+    });
+    assert.deepEqual(rbStage.map((player) => player.name), ["Running Back"], `${rankingModel} should require RB for picks 1-6`);
+
+    const wrStage = engine.rankPlayers(players, {
+      currentPick: 61,
+      roster: Array.from({ length: 6 }, (_, index) => ({ name: `RB ${index}`, position: "RB" })),
+    }, { teams: 10, draftSlot: 1, rankingModel, sixRbThenFourWrEnabled: true });
+    assert.deepEqual(wrStage.map((player) => player.name), ["Wide Receiver"], `${rankingModel} should require WR for picks 7-10`);
+  }
+});
+
+test("optionally requires six running backs followed by four receivers and one best quarterback", () => {
+  const config = { ...engine.DEFAULT_CONFIG, sixRbThenFourWrOneQbEnabled: true };
+  assert.equal(engine.isSixRbThenFourWrOneQbBlocked("TE", config, {}), true, "TE is blocked in picks 1-6");
+  assert.equal(engine.isSixRbThenFourWrOneQbBlocked("RB", config, { RB: 5 }), false);
+  assert.equal(engine.isSixRbThenFourWrOneQbBlocked("TE", config, { RB: 6 }), true, "TE remains blocked in picks 7-11");
+  assert.equal(engine.isSixRbThenFourWrOneQbBlocked("WR", config, { RB: 6 }), false);
+  assert.equal(engine.isSixRbThenFourWrOneQbBlocked("QB", config, { RB: 6 }), false);
+  assert.equal(engine.isSixRbThenFourWrOneQbBlocked("QB", config, { RB: 6, QB: 1 }), true, "only one QB is allowed");
+  assert.equal(engine.isSixRbThenFourWrOneQbBlocked("WR", config, { RB: 6, WR: 4 }), true, "only four WRs are allowed");
+  assert.equal(engine.isSixRbThenFourWrOneQbBlocked("WR", config, { RB: 6, WR: 3, QB: 1 }), false);
+  assert.equal(engine.isSixRbThenFourWrOneQbBlocked("QB", config, { RB: 6, WR: 4 }), false, "pick 11 forces the missing QB");
+  assert.equal(engine.isSixRbThenFourWrOneQbBlocked("TE", config, { RB: 6, WR: 4, QB: 1 }), false, "TE returns at pick 12");
+  assert.equal(engine.isSixRbThenFourWrOneQbBlocked("QB", config, { RB: 6, WR: 4, QB: 1 }), true, "QB2 stays blocked after pick 11");
+  assert.equal(engine.isSixRbThenFourWrOneQbBlocked("TE", config, { RB: 6, WR: 4, QB: 1, TE: 1 }), true, "TE2 stays blocked after pick 11");
+
+  const players = [
+    { name: "Best Quarterback", position: "QB", fantasyProsRank: 1, fantasyProsPositionRank: 1, vegasPoints: 400, draftSharks3dValue: 100 },
+    { name: "Second Quarterback", position: "QB", fantasyProsRank: 2, fantasyProsPositionRank: 2, vegasPoints: 390, draftSharks3dValue: 90 },
+    { name: "Running Back", position: "RB", fantasyProsRank: 20, fantasyProsPositionRank: 10, vegasPoints: 200, draftSharks3dValue: 70 },
+    { name: "Wide Receiver", position: "WR", fantasyProsRank: 30, fantasyProsPositionRank: 12, vegasPoints: 190, draftSharks3dValue: 65 },
+    { name: "Tight End", position: "TE", fantasyProsRank: 3, fantasyProsPositionRank: 1, vegasPoints: 250, draftSharks3dValue: 95 },
+  ];
+  for (const rankingModel of ["think-rmv", "sharp-value", "vegas-sharks-80", "vegas-only", "balanced-v04"]) {
+    const qbForced = engine.rankPlayers(players, {
+      currentPick: 101,
+      roster: [
+        ...Array.from({ length: 6 }, (_, index) => ({ name: `RB ${index}`, position: "RB" })),
+        ...Array.from({ length: 4 }, (_, index) => ({ name: `WR ${index}`, position: "WR" })),
+      ],
+    }, { teams: 10, draftSlot: 1, rankingModel, sixRbThenFourWrOneQbEnabled: true });
+    assert.deepEqual(qbForced.map((player) => player.name), ["Best Quarterback", "Second Quarterback"], `${rankingModel} should force and rank the best QB first`);
+
+    const capped = engine.rankPlayers(players, {
+      currentPick: 121,
+      roster: [
+        ...Array.from({ length: 6 }, (_, index) => ({ name: `RB ${index}`, position: "RB" })),
+        ...Array.from({ length: 4 }, (_, index) => ({ name: `WR ${index}`, position: "WR" })),
+        { name: "Rostered QB", position: "QB" },
+        { name: "Rostered TE", position: "TE" },
+      ],
+    }, { teams: 10, draftSlot: 1, rankingModel, sixRbThenFourWrOneQbEnabled: true });
+    assert.ok(capped.every((player) => !["QB", "TE"].includes(player.position)), `${rankingModel} should block QB2 and TE2`);
   }
 });

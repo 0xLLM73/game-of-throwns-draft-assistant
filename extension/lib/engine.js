@@ -7,16 +7,22 @@
     rosterSize: 17,
     benchSlots: 7,
     draftSlot: 0,
-    rankingModel: "sharp-value",
+    rankingModel: "vegas-only",
+    rankingModelVersion: 1,
     suggestionPosition: "ALL",
     rbPreference: 1,
     earlyQbTeBlockEnabled: false,
     earlyQbTeOneTotalEnabled: false,
+    fiveRbFirstSixEnabled: false,
+    sixRbFirstSixEnabled: false,
+    sixRbThenFourWrEnabled: false,
+    sixRbThenFourWrOneQbEnabled: false,
     ecrWeight: 0.55,
     vegasWeight: 0.45,
     autoDraftEnabled: false,
-    autoDraftMinSeconds: 5,
-    autoDraftMaxSeconds: 30,
+    autoDraftMinSeconds: 10,
+    autoDraftMaxSeconds: 20,
+    autoDraftWindowVersion: 2,
     replacementRanks: { QB: 11, RB: 32, WR: 34, TE: 11 },
     rosterMax: { QB: 2, RB: 8, WR: 8, TE: 3, DST: 3, K: 3 },
     starterSlots: { QB: 1, RB: 2, WR: 2, TE: 1, RB_WR: 1, FLEX: 1, DST: 1, K: 1 },
@@ -75,6 +81,20 @@
   function positionKey(position) {
     if (position === "D/ST" || position === "DEF") return "DST";
     return position;
+  }
+
+  function normalizeTeam(value) {
+    const team = String(value || "").trim().toUpperCase();
+    return ({ JAX: "JAC", WAS: "WSH", LVR: "LV" })[team] || team;
+  }
+
+  function isHardUnavailableStatus(value) {
+    const status = String(value || "").trim().toUpperCase().replace(/[_-]+/g, " ");
+    return /^(?:IR|INJURY RESERVE|OUT|O|DOUBTFUL|D|SUSPENDED|SUSPENSION|SUS|PUP|NFI|INACTIVE)$/.test(status);
+  }
+
+  function isPlayerUnavailable(player) {
+    return player?.espnActive === false || isHardUnavailableStatus(player?.espnInjuryStatus);
   }
 
   function rbPriorityAdjustment(positionValue, rankingModel, strength = 1) {
@@ -171,6 +191,57 @@
     if (position !== "QB" && position !== "TE") return false;
     if (config.earlyQbTeBlockEnabled) return true;
     return Boolean(config.earlyQbTeOneTotalEnabled && (rosterCounts.QB || 0) + (rosterCounts.TE || 0) >= 1);
+  }
+
+  function isFirstSixRbQuotaBlocked(positionValue, enabled, requiredRunningBacks, rosterCounts = {}) {
+    if (!enabled) return false;
+    const rostered = Object.values(rosterCounts).reduce((total, count) => total + count, 0);
+    if (rostered >= 6) return false;
+    const runningBacks = rosterCounts.RB || 0;
+    const remainingPicksIncludingCurrent = 6 - rostered;
+    const runningBacksNeeded = Math.max(0, requiredRunningBacks - runningBacks);
+    return runningBacksNeeded >= remainingPicksIncludingCurrent && positionKey(positionValue) !== "RB";
+  }
+
+  function isFiveRbFirstSixBlocked(positionValue, config, rosterCounts = {}) {
+    return isFirstSixRbQuotaBlocked(positionValue, config.fiveRbFirstSixEnabled, 5, rosterCounts);
+  }
+
+  function isSixRbFirstSixBlocked(positionValue, config, rosterCounts = {}) {
+    return isFirstSixRbQuotaBlocked(positionValue, config.sixRbFirstSixEnabled, 6, rosterCounts);
+  }
+
+  function isSixRbThenFourWrBlocked(positionValue, config, rosterCounts = {}) {
+    if (!config.sixRbThenFourWrEnabled) return false;
+    const rostered = Object.values(rosterCounts).reduce((total, count) => total + count, 0);
+    const position = positionKey(positionValue);
+    if (rostered < 6) return position !== "RB";
+    if (rostered < 10) return position !== "WR";
+    return false;
+  }
+
+  function isSixRbThenFourWrOneQbBlocked(positionValue, config, rosterCounts = {}) {
+    if (!config.sixRbThenFourWrOneQbEnabled) return false;
+    const rostered = Object.values(rosterCounts).reduce((total, count) => total + count, 0);
+    const position = positionKey(positionValue);
+    if (rostered < 6) return position !== "RB";
+    if (rostered >= 11) {
+      if (position === "QB" && (rosterCounts.QB || 0) >= 1) return true;
+      if (position === "TE" && (rosterCounts.TE || 0) >= 1) return true;
+      return false;
+    }
+    if (position !== "WR" && position !== "QB") return true;
+
+    const wideReceivers = rosterCounts.WR || 0;
+    const quarterbacks = rosterCounts.QB || 0;
+    const remainingPicksIncludingCurrent = 11 - rostered;
+    const wideReceiversNeeded = Math.max(0, 4 - wideReceivers);
+    const quarterbacksNeeded = Math.max(0, 1 - quarterbacks);
+    if (position === "WR" && wideReceivers >= 4) return true;
+    if (position === "QB" && quarterbacks >= 1) return true;
+    if (wideReceiversNeeded >= remainingPicksIncludingCurrent) return position !== "WR";
+    if (quarterbacksNeeded >= remainingPicksIncludingCurrent) return position !== "QB";
+    return false;
   }
 
   function replacementPoints(players, config) {
@@ -436,8 +507,13 @@
     const offensiveLineupComplete = offensiveStarterAssignments >= OFFENSIVE_SLOTS.length;
     const candidates = players
       .filter((player) => !drafted.has(normalizeName(player.name)))
+      .filter((player) => !isPlayerUnavailable(player))
       .filter((player) => canDraftPosition(player.position, rosterCounts, config))
       .filter((player) => !isEarlyQbTeBlocked(player.position, round, config, rosterCounts))
+      .filter((player) => !isFiveRbFirstSixBlocked(player.position, config, rosterCounts))
+      .filter((player) => !isSixRbFirstSixBlocked(player.position, config, rosterCounts))
+      .filter((player) => !isSixRbThenFourWrBlocked(player.position, config, rosterCounts))
+      .filter((player) => !isSixRbThenFourWrOneQbBlocked(player.position, config, rosterCounts))
       .map((player) => {
         const position = positionKey(player.position);
         if (position === "K" || position === "DST") {
@@ -543,8 +619,13 @@
 
     return players
       .filter((player) => !drafted.has(normalizeName(player.name)))
+      .filter((player) => !isPlayerUnavailable(player))
       .filter((player) => canDraftPosition(player.position, rosterCounts, config))
       .filter((player) => !isEarlyQbTeBlocked(player.position, round, config, rosterCounts))
+      .filter((player) => !isFiveRbFirstSixBlocked(player.position, config, rosterCounts))
+      .filter((player) => !isSixRbFirstSixBlocked(player.position, config, rosterCounts))
+      .filter((player) => !isSixRbThenFourWrBlocked(player.position, config, rosterCounts))
+      .filter((player) => !isSixRbThenFourWrOneQbBlocked(player.position, config, rosterCounts))
       .map((player) => {
         const position = positionKey(player.position);
         const replacement = replacements[position];
@@ -638,6 +719,9 @@
   root.DraftAssistantEngine = {
     DEFAULT_CONFIG,
     normalizeName,
+    normalizeTeam,
+    isHardUnavailableStatus,
+    isPlayerUnavailable,
     nextPickAfter,
     opponentPicksUntilNext,
     ownPicksBefore,
@@ -652,6 +736,10 @@
     maxStarterAssignments,
     canDraftPosition,
     isEarlyQbTeBlocked,
+    isFiveRbFirstSixBlocked,
+    isSixRbFirstSixBlocked,
+    isSixRbThenFourWrBlocked,
+    isSixRbThenFourWrOneQbBlocked,
     rankPlayers,
   };
 })(globalThis);

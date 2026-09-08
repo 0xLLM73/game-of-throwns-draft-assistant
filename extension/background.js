@@ -1,4 +1,77 @@
 "use strict";
+if (typeof importScripts === "function") importScripts("lib/weekly.js", "lib/weekly-source.js", "lib/weekly-calendar.js");
+
+let weeklyAutoInFlight = null;
+async function automaticWeekly() {
+  if (weeklyAutoInFlight) return weeklyAutoInFlight;
+  weeklyAutoInFlight = (async () => {
+    const now = Date.now();
+    const C = globalThis.WeeklyVegasCalendar;
+    const season = C.seasonAt(now);
+    const saved = await chrome.storage.local.get(["weeklyVegasCalendar", "weeklyVegasAutoAttempts"]);
+    let cached = saved.weeklyVegasCalendar;
+    let scheduleWarning = "";
+    if (cached?.calendar?.season !== season || now - cached.fetchedAt >= 6 * 3600000) {
+      try {
+        const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${season}0801-${season + 1}0215&limit=1000`;
+        // Range responses include January games but omit ESPN's week calendar.
+        const urls = [url, `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${season}&seasontype=2&limit=1000`];
+        const [games, metadata] = await Promise.all(urls.map(async endpoint => {
+          const response = await fetch(endpoint, { credentials: "omit", cache: "no-store", signal: AbortSignal.timeout(15000) });
+          if (!response.ok) throw Error(`ESPN schedule HTTP ${response.status}`);
+          return response.json();
+        }));
+        cached = { calendar: C.build({ ...metadata, events: games.events }, season), fetchedAt: now };
+        await chrome.storage.local.set({ weeklyVegasCalendar: cached });
+      } catch (error) {
+        if (cached?.calendar?.season !== season) throw Error(`Cannot determine the week: ${error.message}. You can choose a week manually.`);
+        scheduleWarning = "Using cached ESPN schedule; kickoff changes could not be checked.";
+      }
+    }
+    const selected = C.select(cached.calendar, now);
+    if (selected.ended) return { ok: true, ...selected, warning: "Regular season complete; automatic refresh paused." };
+    const key = `${season}:${selected.week}`;
+    const attempts = saved.weeklyVegasAutoAttempts || {};
+    const last = attempts[key];
+    let projectionWarning = last?.error || "";
+    if (!last || now >= last.nextAt) {
+      // Persist the retry window before fetching, so reloads and other tabs don't hammer the provider.
+      attempts[key] = { nextAt: now + 15 * 60000, error: "" };
+      await chrome.storage.local.set({ weeklyVegasAutoAttempts: attempts });
+      try {
+        await refreshWeekly({ season, week: selected.week });
+        attempts[key] = { nextAt: Date.now() + 3600000, error: "" };
+        projectionWarning = "";
+      } catch (error) {
+        projectionWarning = `Week ${selected.week} refresh unavailable: ${error.message} Automatic retry in 15 minutes.`;
+        attempts[key].error = projectionWarning;
+      }
+      await chrome.storage.local.set({ weeklyVegasAutoAttempts: attempts });
+    }
+    return { ok: true, ...selected, warning: [scheduleWarning, projectionWarning].filter(Boolean).join(" ") };
+  })();
+  try { return await weeklyAutoInFlight; } finally { weeklyAutoInFlight = null; }
+}
+
+let weeklyRefreshInFlight = false;
+async function refreshWeekly(message) {
+  const season = Number(message.season), week = Number(message.week);
+  if (!Number.isInteger(season) || season < 2026 || season > 2100 || !Number.isInteger(week) || week < 1 || week > 18) throw Error("Choose a valid season and week first.");
+  if (weeklyRefreshInFlight) throw Error("A weekly refresh is already running. Please wait.");
+  weeklyRefreshInFlight = true;
+  try {
+    const response = await fetch(`https://www.parlaysavant.com/fantasy/vegas-rankings/week-${week}/all/half-ppr?season=${season}`, { credentials: "omit", cache: "no-store", signal: AbortSignal.timeout(20000) });
+    if (!response.ok) throw Error(`Weekly source returned HTTP ${response.status}. Saved data was kept.`);
+    const data = globalThis.WeeklyVegasSource.parse(await response.text(), season, week);
+    const stored = await chrome.storage.local.get(["weeklyVegasDatasets", "weeklyVegasBackups"]);
+    const datasets = stored.weeklyVegasDatasets || {}, backups = stored.weeklyVegasBackups || {};
+    const key = `${season}:${week}`;
+    if (datasets[key]) backups[key] = datasets[key];
+    datasets[key] = data;
+    await chrome.storage.local.set({ weeklyVegasDatasets: datasets, weeklyVegasBackups: backups });
+    return { ok: true, count: data.players.length };
+  } finally { weeklyRefreshInFlight = false; }
+}
 
 const LOCK_TTL_MS = 20000;
 const AUTO_ALARM_PREFIX = "got-auto-alarm:";
@@ -158,8 +231,20 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "got-weekly:auto") {
+    automaticWeekly().then(sendResponse, error => sendResponse({ ok: false, reason: error.message }));
+    return true;
+  }
+  if (message.type === "got-weekly:refresh") {
+    refreshWeekly(message).then(sendResponse, error => sendResponse({ ok: false, reason: error.message }));
+    return true;
+  }
   if (!message?.type?.startsWith("got-draft-lock:") && !message?.type?.startsWith("got-auto-alarm:") && message?.type !== "got-keep-awake:set") return false;
   lockQueue = lockQueue.catch(() => {}).then(async () => {
+    if (message.type === "got-weekly:open") {
+      await chrome.tabs.create({ url: chrome.runtime.getURL("weekly.html") });
+      return { ok: true };
+    }
     if (message.type === "got-keep-awake:set") return setKeepAwake(message, sender);
     if (message.type === "got-auto-alarm:schedule") return scheduleAutoAlarm(message, sender);
     if (message.type === "got-auto-alarm:clear") return clearAutoAlarm(message, sender);
