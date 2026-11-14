@@ -84,7 +84,7 @@
     [...data.players].sort((a, b) => (W.projection(b).points ?? -Infinity) - (W.projection(a).points ?? -Infinity)).forEach((p) => {
       const projection = W.projection(p);
       const row = document.createElement("tr");
-      [p.name, p.position, projection.points === null ? "—" : projection.points.toFixed(1), [projection.detail, p.note].filter(Boolean).join(" · ")].forEach((text) => { const cell = document.createElement("td"); cell.textContent = text; row.append(cell); });
+      [p.name, p.position, projection.points === null ? "—" : projection.points.toFixed(1), projection.detail].forEach((text) => { const cell = document.createElement("td"); cell.textContent = text; row.append(cell); });
       $("players").append(row);
     });
   }

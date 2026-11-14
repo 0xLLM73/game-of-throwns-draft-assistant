@@ -19,7 +19,9 @@
         if (!Object.hasOwn(weights, stat) || !number(value) || value < 0) throw Error(`Invalid stat ${stat} for ${p.name}`);
       }
       if (p.halfPprPoints == null && !Object.keys(stats).length && !p.unavailable) throw Error(`Missing projection for ${p.name}`);
-      return { name: p.name.trim(), position: p.position, team: String(p.team || ""), espnId: p.espnId ? String(p.espnId) : null, halfPprPoints: p.halfPprPoints ?? null, stats, unavailable: Boolean(p.unavailable), note: String(p.note || ""), kickoff: p.kickoff && Number.isFinite(Date.parse(p.kickoff)) ? new Date(p.kickoff).toISOString() : null };
+      for (const field of ["impliedTeamTotal", "gameOverUnder", "teamSpread"]) if (p[field] != null && !number(p[field])) throw Error(`Invalid ${field} for ${p.name}`);
+      return { name: p.name.trim(), position: p.position, team: String(p.team || ""), espnId: p.espnId ? String(p.espnId) : null, halfPprPoints: p.halfPprPoints ?? null, stats, unavailable: Boolean(p.unavailable), note: String(p.note || ""), kickoff: p.kickoff && Number.isFinite(Date.parse(p.kickoff)) ? new Date(p.kickoff).toISOString() : null,
+        impliedTeamTotal: p.impliedTeamTotal ?? null, gameOverUnder: p.gameOverUnder ?? null, teamSpread: p.teamSpread ?? null, oddsProvider: String(p.oddsProvider || ""), opponent: String(p.opponent || "") };
     });
     return { season: input.season, week: input.week, scoring: "half-ppr", source: input.source, updatedAt: new Date(input.updatedAt).toISOString(), timestampKind: input.timestampKind === "retrieved" ? "retrieved" : "source", players };
   }
@@ -42,6 +44,11 @@
     return matches.length === 1 ? matches[0] : null;
   }
   function forWeek(datasets, season, week) { return datasets?.[`${season}:${week}`] || null; }
+  function impliedTotalLabel(player) {
+    if (!number(player?.impliedTeamTotal)) return "Team total unavailable";
+    const spread = number(player.teamSpread) ? ` · ${player.team} ${player.teamSpread > 0 ? "+" : ""}${player.teamSpread}` : "";
+    return `Implied team total ${player.impliedTeamTotal.toFixed(1)}${spread}${number(player.gameOverUnder) ? ` · O/U ${player.gameOverUnder}` : ""}`;
+  }
   function lineupSuggestions(roster, data, now = Date.now()) {
     const slots = { QB: ["QB"], RB: ["RB"], WR: ["WR"], TE: ["TE"], FLEX: ["RB", "WR", "TE"], "RB/WR": ["RB", "WR"], "WR/TE": ["WR", "TE"], K: ["K"], "D/ST": ["DST"], DST: ["DST"] };
     const rows = roster.map(identity => {
@@ -58,5 +65,5 @@
     }
     return suggestions.sort((a, b) => b.gain - a.gain);
   }
-  root.WeeklyVegas = { weights, normalize, validate, projection, match, forWeek, lineupSuggestions };
+  root.WeeklyVegas = { weights, normalize, validate, projection, match, forWeek, impliedTotalLabel, lineupSuggestions };
 })(globalThis);

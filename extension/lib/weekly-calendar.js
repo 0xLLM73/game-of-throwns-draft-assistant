@@ -22,7 +22,19 @@
       return { week, rolloverAt, boundary: monday.length ? "first Monday-night kickoff" : "ESPN week end (no Monday-night kickoff scheduled)" };
     }).sort((a, b) => a.week - b.week);
     if (weeks.some((w, i) => w.week !== i + 1 || (i && w.rolloverAt <= weeks[i - 1].rolloverAt))) throw Error("ESPN week boundaries are inconsistent.");
-    return { season, weeks, endsAt: Date.parse(calendar.endDate) };
+    const teamTotals = {};
+    for (const event of payload.events || []) {
+      if (event.season?.year !== season || event.season?.type !== 2 || !Number.isInteger(event.week?.number)) continue;
+      const competition = event.competitions?.[0];
+      const odds = competition?.odds?.find(o => Number.isFinite(o.overUnder) && Number.isFinite(o.spread));
+      const home = competition?.competitors?.find(c => c.homeAway === "home")?.team?.abbreviation;
+      const away = competition?.competitors?.find(c => c.homeAway === "away")?.team?.abbreviation;
+      if (!odds || !home || !away) continue;
+      const common = { gameOverUnder: odds.overUnder, provider: odds.provider?.name || "ESPN odds provider" };
+      teamTotals[`${event.week.number}:${home}`] = { ...common, team: home, opponent: away, teamSpread: odds.spread, impliedTeamTotal: (odds.overUnder - odds.spread) / 2 };
+      teamTotals[`${event.week.number}:${away}`] = { ...common, team: away, opponent: home, teamSpread: -odds.spread, impliedTeamTotal: (odds.overUnder + odds.spread) / 2 };
+    }
+    return { season, weeks, endsAt: Date.parse(calendar.endDate), teamTotals };
   }
   function select(calendar, now = Date.now()) {
     const current = calendar.weeks.find(w => now < w.rolloverAt) || calendar.weeks.at(-1);

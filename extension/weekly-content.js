@@ -13,6 +13,14 @@
   advice.id = "lineup-advice";
   advice.setAttribute("aria-label", "Suggested lineup changes");
   $("rows").closest("table").before(advice);
+  function setColumns(columns, sortedColumn = -1) {
+    const header = $("rows").closest("table").querySelector("thead tr");
+    header.replaceChildren(...columns.map((text, index) => {
+      const th = document.createElement("th"); th.textContent = text;
+      if (index === sortedColumn) th.setAttribute("aria-sort", "descending");
+      return th;
+    }));
+  }
   shadow.querySelector("style").textContent += "table,td,th{color:#e2e8f0}";
   $("import").href = chrome.runtime.getURL("weekly.html");
   const refresh = document.createElement("button");
@@ -24,6 +32,7 @@
       const result = await chrome.runtime.sendMessage({ type: "got-weekly:refresh", season: Number($("season").value), week: Number($("week").value) });
       if (!result?.ok) throw Error(result?.reason || "Refresh failed; reload ESPN if you just updated the extension.");
       datasets = (await chrome.storage.local.get("weeklyVegasDatasets")).weeklyVegasDatasets || {};
+      autoStatus.textContent = `Refresh succeeded: ${Number($("season").value)} Week ${Number($("week").value)} · ${result.count} player projections loaded.`;
       render(true);
     } catch (error) { $("status").textContent = error.message; }
     finally { refresh.disabled = false; refresh.textContent = "Refresh from Vegas"; }
@@ -51,6 +60,8 @@
   let autoBusy = false;
   let nextAutoCheck = 0;
   let modeRevision = 0;
+  let waiverPosition = 'ALL';
+  let waiverSort = 'points';
   async function checkAutomatic() {
     if (!auto.checked || autoBusy || document.hidden || !/^\/football\/(team|boxscore|players\/add)\/?$/.test(location.pathname) || Date.now() < nextAutoCheck) return;
     autoBusy = true;
@@ -117,6 +128,7 @@
     const matchup = location.pathname.includes('/boxscore');
     const waivers = location.pathname.includes('/players/add');
     shadow.querySelector('h2').textContent = waivers ? 'Vegas waiver wire · Half PPR' : matchup ? 'Vegas matchup · Half PPR' : 'Weekly Vegas · Half PPR';
+    setColumns(waivers ? ['Player / ESPN status', 'Team total', 'Vegas player pts'] : ['Player / slot', 'Vegas pts'], waivers ? (waiverSort === 'teamTotal' ? 1 : 2) : -1);
     if (waivers) { renderWaivers(); return; }
     if (matchup) { renderMatchup(); return; }
     const players = roster();
@@ -154,7 +166,7 @@
       const name = document.createElement("td");
       name.textContent = `${identity.name} · ${identity.slot}${identity.status ? ` · ESPN ${identity.status}` : ""}`;
       const detail = document.createElement("small");
-      detail.textContent = [result.detail, player?.note, player?.kickoff && Date.parse(player.kickoff) <= Date.now() ? "Game started; pregame estimate" : ""].filter(Boolean).join(" · ");
+      detail.textContent = [result.detail, W.impliedTotalLabel(player), player?.kickoff && Date.parse(player.kickoff) <= Date.now() ? "Game started; pregame estimate" : "", player?.note].filter(Boolean).join(" · ");
       name.append(detail);
       const points = document.createElement("td");
       points.textContent = result.points === null ? "—" : result.points.toFixed(1);
@@ -167,9 +179,9 @@
     const data = W.forWeek(datasets, Number($("season").value), Number($("week").value));
     advice.replaceChildren(); $("rows").replaceChildren();
     $("context").textContent = data ? `${data.season} Week ${data.week} · ${data.source} · Retrieved ${new Date(data.updatedAt).toLocaleString()} · Source update time unknown` : 'No projections loaded for this week.';
-    $("status").textContent = 'Pregame starter projections only—not a sportsbook matchup line or win probability. Bench excluded. Missing K/DST or other projections prevent a full-team winner call.';
+    $("status").textContent = 'Starter projections only—not a sportsbook matchup line or win probability. Bench and IR excluded. During live games, these remain pregame estimates. Missing K/DST or other projections prevent a full-team winner call.';
     const note = document.createElement('p'); advice.append(note);
-    if (teams.length !== 2) { note.textContent = 'Waiting for ESPN’s pregame starter comparison. Live/postgame layouts are not yet supported.'; return; }
+    if (teams.length !== 2) { note.textContent = 'Waiting for ESPN’s two matchup lineup tables. Reload this ESPN page if both teams are already visible.'; return; }
     if (teams.some(t => t.week !== Number($("week").value))) { note.textContent = 'Choose the matchup’s week in this panel. Automatic may already show next week after Monday kickoff.'; return; }
     const totals = teams.map(t => globalThis.WeeklyVegasMatchup.summarize(t, data));
     const delta = totals[0].total - totals[1].total;
@@ -181,6 +193,7 @@
       for (const player of team.players) {
         const row = document.createElement('tr'), name = document.createElement('td'), points = document.createElement('td');
         name.textContent = `${player.name} · ${player.position || 'empty'}${player.status ? ` · ${player.status}` : ''}`;
+        const line = document.createElement('small'); line.textContent = [W.impliedTotalLabel(player.projectionPlayer), player.projectionPlayer?.note].filter(Boolean).join(' · '); name.append(line);
         points.textContent = player.points === null ? '—' : player.points.toFixed(1);
         row.append(name, points); $("rows").append(row);
       }
@@ -188,19 +201,38 @@
   }
   function renderWaivers() {
     const data = W.forWeek(datasets, Number($("season").value), Number($("week").value));
-    const players = globalThis.WeeklyVegasWaivers.rank(globalThis.WeeklyVegasWaivers.read(document), data);
+    const loaded = globalThis.WeeklyVegasWaivers.read(document);
+    const players = globalThis.WeeklyVegasWaivers.rank(loaded, data, { position: waiverPosition, sort: waiverSort });
     advice.replaceChildren(); $("rows").replaceChildren();
     $("context").textContent = data ? `${data.season} Week ${data.week} · ${data.source} · Retrieved ${new Date(data.updatedAt).toLocaleString()} · Source update time unknown` : 'Choose a week and refresh projections.';
     const note = document.createElement('p');
-    note.textContent = 'Highest projected points among available players on this loaded ESPN page only. Use ESPN’s position/search filters and pagination to compare more players. This is a weekly points ranking—not a season-long value or waiver-priority recommendation. No claims are submitted.';
+    note.textContent = 'Includes free agents, waivers, and players rostered by other teams when they are present on this loaded ESPN page. Use ESPN’s availability filter or pagination to load a different group. No claims are submitted.';
     advice.append(note);
-    $("status").textContent = `${players.filter(p => p.points !== null).length}/${players.length} loaded available players have projections. Missing K/DST and other projections stay blank. Check injuries, game locks, and claim deadlines before adding.`;
+    const controls = document.createElement('div');
+    const positionLabel = document.createElement('label'); positionLabel.append('Position ');
+    const positionSelect = document.createElement('select');
+    for (const value of ['ALL', 'QB', 'RB', 'WR', 'TE', 'K', 'DST']) positionSelect.add(new Option(value === 'DST' ? 'D/ST' : value === 'ALL' ? 'All' : value, value));
+    positionSelect.value = waiverPosition;
+    positionSelect.onchange = () => { waiverPosition = positionSelect.value; render(true); };
+    positionLabel.append(positionSelect);
+    const sortLabel = document.createElement('label'); sortLabel.append('Sort ');
+    const sortSelect = document.createElement('select');
+    sortSelect.add(new Option('Vegas player points', 'points')); sortSelect.add(new Option('Implied team total', 'teamTotal'));
+    sortSelect.value = waiverSort;
+    sortSelect.onchange = () => { waiverSort = sortSelect.value; render(true); };
+    sortLabel.append(sortSelect); controls.append(positionLabel, ' ', sortLabel); advice.append(controls);
+    $("status").textContent = `Sorted high-to-low by ${waiverSort === 'teamTotal' ? 'implied team total' : 'Vegas player points'} · ${players.length}/${loaded.length} loaded players shown · ${players.filter(p => p.points !== null).length} have player projections · ${players.filter(p => Number.isFinite(p.projectionPlayer?.impliedTeamTotal)).length} have team totals.`;
     players.forEach((p, i) => {
-      const row = document.createElement('tr'), name = document.createElement('td'), points = document.createElement('td');
-      name.textContent = `${i + 1}. ${p.name} · ${p.position || '?'} · ${p.availability}${p.status ? ` · ${p.status}` : ''}`;
+      const row = document.createElement('tr'), name = document.createElement('td'), total = document.createElement('td'), points = document.createElement('td');
+      name.textContent = `${i + 1}. ${p.name} · ${p.team || '?'} ${p.position || '?'} · ${p.availability || 'ESPN status unavailable'}${p.status ? ` · ${p.status}` : ''}`;
+      const line = document.createElement('small');
+      line.textContent = Number.isFinite(p.projectionPlayer?.teamSpread) && Number.isFinite(p.projectionPlayer?.gameOverUnder) ? `${p.team} ${p.projectionPlayer.teamSpread > 0 ? '+' : ''}${p.projectionPlayer.teamSpread} · O/U ${p.projectionPlayer.gameOverUnder}` : 'Game line unavailable';
+      name.append(line);
+      if (p.projectionPlayer?.note) { const gameTime = document.createElement('small'); gameTime.textContent = p.projectionPlayer.note; name.append(gameTime); }
       if (p.kickoff && Date.parse(p.kickoff) <= Date.now()) { const note = document.createElement('small'); note.textContent = 'Game started; pregame estimate'; name.append(note); }
+      total.textContent = Number.isFinite(p.projectionPlayer?.impliedTeamTotal) ? p.projectionPlayer.impliedTeamTotal.toFixed(1) : '—';
       points.textContent = p.points === null ? '—' : p.points.toFixed(1);
-      row.append(name, points); $("rows").append(row);
+      row.append(name, total, points); $("rows").append(row);
     });
   }
   $("toggle").onclick = () => { $("body").hidden = !$("body").hidden; $("toggle").textContent = $("body").hidden ? "Show" : "Hide"; $("toggle").setAttribute("aria-expanded", String(!$("body").hidden)); };

@@ -2,6 +2,19 @@
 if (typeof importScripts === "function") importScripts("lib/weekly.js", "lib/weekly-source.js", "lib/weekly-calendar.js");
 
 let weeklyAutoInFlight = null;
+async function downloadWeeklyCalendar(season, now = Date.now()) {
+  const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${season}0801-${season + 1}0215&limit=1000`;
+  // Range responses include January games but omit ESPN's week calendar.
+  const urls = [url, `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${season}&seasontype=2&limit=1000`];
+  const [games, metadata] = await Promise.all(urls.map(async endpoint => {
+    const response = await fetch(endpoint, { credentials: "omit", cache: "no-store", signal: AbortSignal.timeout(15000) });
+    if (!response.ok) throw Error(`ESPN schedule HTTP ${response.status}`);
+    return response.json();
+  }));
+  const cached = { calendar: globalThis.WeeklyVegasCalendar.build({ ...metadata, events: games.events }, season), fetchedAt: now };
+  await chrome.storage.local.set({ weeklyVegasCalendar: cached });
+  return cached;
+}
 async function automaticWeekly() {
   if (weeklyAutoInFlight) return weeklyAutoInFlight;
   weeklyAutoInFlight = (async () => {
@@ -11,18 +24,9 @@ async function automaticWeekly() {
     const saved = await chrome.storage.local.get(["weeklyVegasCalendar", "weeklyVegasAutoAttempts"]);
     let cached = saved.weeklyVegasCalendar;
     let scheduleWarning = "";
-    if (cached?.calendar?.season !== season || now - cached.fetchedAt >= 6 * 3600000) {
+    if (cached?.calendar?.season !== season || !cached?.calendar?.teamTotals || now - cached.fetchedAt >= 6 * 3600000) {
       try {
-        const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${season}0801-${season + 1}0215&limit=1000`;
-        // Range responses include January games but omit ESPN's week calendar.
-        const urls = [url, `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${season}&seasontype=2&limit=1000`];
-        const [games, metadata] = await Promise.all(urls.map(async endpoint => {
-          const response = await fetch(endpoint, { credentials: "omit", cache: "no-store", signal: AbortSignal.timeout(15000) });
-          if (!response.ok) throw Error(`ESPN schedule HTTP ${response.status}`);
-          return response.json();
-        }));
-        cached = { calendar: C.build({ ...metadata, events: games.events }, season), fetchedAt: now };
-        await chrome.storage.local.set({ weeklyVegasCalendar: cached });
+        cached = await downloadWeeklyCalendar(season, now);
       } catch (error) {
         if (cached?.calendar?.season !== season) throw Error(`Cannot determine the week: ${error.message}. You can choose a week manually.`);
         scheduleWarning = "Using cached ESPN schedule; kickoff changes could not be checked.";
@@ -34,7 +38,9 @@ async function automaticWeekly() {
     const attempts = saved.weeklyVegasAutoAttempts || {};
     const last = attempts[key];
     let projectionWarning = last?.error || "";
-    if (!last || now >= last.nextAt) {
+    const projectionData = (await chrome.storage.local.get("weeklyVegasDatasets")).weeklyVegasDatasets?.[key];
+    const needsTeamTotals = projectionData?.players?.some(p => p.team && !Object.hasOwn(p, "impliedTeamTotal")) && Object.keys(cached.calendar.teamTotals || {}).length > 0;
+    if (!last || now >= last.nextAt || needsTeamTotals) {
       // Persist the retry window before fetching, so reloads and other tabs don't hammer the provider.
       attempts[key] = { nextAt: now + 15 * 60000, error: "" };
       await chrome.storage.local.set({ weeklyVegasAutoAttempts: attempts });
@@ -60,15 +66,26 @@ async function refreshWeekly(message) {
   if (weeklyRefreshInFlight) throw Error("A weekly refresh is already running. Please wait.");
   weeklyRefreshInFlight = true;
   try {
+    let schedule = (await chrome.storage.local.get("weeklyVegasCalendar")).weeklyVegasCalendar;
+    if (schedule?.calendar?.season !== season || !schedule?.calendar?.teamTotals || Date.now() - schedule.fetchedAt >= 6 * 3600000) {
+      try { schedule = await downloadWeeklyCalendar(season); } catch { /* Player projections remain useful; team totals will be labeled unavailable. */ }
+    }
     const response = await fetch(`https://www.parlaysavant.com/fantasy/vegas-rankings/week-${week}/all/half-ppr?season=${season}`, { credentials: "omit", cache: "no-store", signal: AbortSignal.timeout(20000) });
     if (!response.ok) throw Error(`Weekly source returned HTTP ${response.status}. Saved data was kept.`);
-    const data = globalThis.WeeklyVegasSource.parse(await response.text(), season, week);
-    const stored = await chrome.storage.local.get(["weeklyVegasDatasets", "weeklyVegasBackups"]);
+    let data = globalThis.WeeklyVegasSource.parse(await response.text(), season, week);
+    const stored = await chrome.storage.local.get(["weeklyVegasDatasets", "weeklyVegasBackups", "weeklyVegasCalendar", "weeklyVegasAutoAttempts"]);
+    const totals = schedule?.calendar?.season === season ? schedule.calendar.teamTotals || {} : {};
+    data = globalThis.WeeklyVegas.validate({ ...data, players: data.players.map(player => {
+      const line = totals[`${week}:${player.team}`];
+      return line ? { ...player, ...line, oddsProvider: line.provider } : player;
+    }) });
     const datasets = stored.weeklyVegasDatasets || {}, backups = stored.weeklyVegasBackups || {};
     const key = `${season}:${week}`;
     if (datasets[key]) backups[key] = datasets[key];
     datasets[key] = data;
-    await chrome.storage.local.set({ weeklyVegasDatasets: datasets, weeklyVegasBackups: backups });
+    const attempts = stored.weeklyVegasAutoAttempts || {};
+    attempts[key] = { nextAt: Date.now() + 3600000, error: "" };
+    await chrome.storage.local.set({ weeklyVegasDatasets: datasets, weeklyVegasBackups: backups, weeklyVegasAutoAttempts: attempts });
     return { ok: true, count: data.players.length };
   } finally { weeklyRefreshInFlight = false; }
 }

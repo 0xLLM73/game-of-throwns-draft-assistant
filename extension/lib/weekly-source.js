@@ -24,11 +24,13 @@
     if (rows.length < 5) throw Error("Provider returned too few weekly players. Try again once more props are published.");
     for (const p of rows) {
       if (p.week !== week || !Number.isFinite(p.halfPprPoints)) throw Error("Provider returned missing or mixed-week projections.");
-      const kickoff = new Date(p.startsAt);
-      const seasonDate = kickoff.getUTCFullYear() === season || (kickoff.getUTCFullYear() === season + 1 && kickoff.getUTCMonth() === 0);
-      if (!p.startsAt || !Number.isFinite(kickoff.getTime()) || !seasonDate) throw Error("Provider returned invalid game dates.");
     }
-    return root.WeeklyVegas.validate({ season, week, scoring: "half-ppr", source: "Parlay Savant · weekly Vegas props", updatedAt: now.toISOString(), timestampKind: "retrieved", players: rows.map(p => ({ name: p.playerName, position: p.position, team: p.team, espnId: p.playerImageUrl?.match(/\/players\/full\/(\d+)\.png/)?.[1], halfPprPoints: p.halfPprPoints, kickoff: p.startsAt, note: "Vegas-derived provider estimate; source update time unknown; lost fumbles and 2-point conversions not included" })) });
+    return root.WeeklyVegas.validate({ season, week, scoring: "half-ppr", source: "Parlay Savant · weekly Vegas props", updatedAt: now.toISOString(), timestampKind: "retrieved", players: rows.map(p => {
+      const kickoff = p.startsAt ? new Date(p.startsAt) : null;
+      const seasonDate = kickoff && (kickoff.getUTCFullYear() === season || (kickoff.getUTCFullYear() === season + 1 && kickoff.getUTCMonth() === 0));
+      const validKickoff = kickoff && Number.isFinite(kickoff.getTime()) && seasonDate ? kickoff.toISOString() : null;
+      return { name: p.playerName, position: p.position, team: p.team, espnId: p.playerImageUrl?.match(/\/players\/full\/(\d+)\.png/)?.[1], halfPprPoints: p.halfPprPoints, kickoff: validKickoff, note: validKickoff ? "" : "Game time unavailable; confirm ESPN lineup lock before making a change." };
+    }) });
   }
   root.WeeklyVegasSource = { parse };
 })(globalThis);
