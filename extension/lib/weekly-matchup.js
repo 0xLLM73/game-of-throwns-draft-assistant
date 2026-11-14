@@ -8,12 +8,8 @@
   }
   function playersFor(table) {
     return Array.from(table.querySelectorAll('tbody tr')).flatMap(row => {
-      const node = row.querySelector('.player__column[title]');
-      const slot = row.querySelector('td')?.textContent?.trim() || '';
-      if (!node || !isStarterSlot(slot)) return [];
-      const name = node.getAttribute('title');
-      const position = row.querySelector('.playerinfo__playerpos')?.textContent.trim().replace('D/ST', 'DST');
-      return [{ name: name === 'Player' ? 'Empty slot' : name, position, slot, status: row.querySelector('.playerinfo__injurystatus')?.textContent.trim() || '' }];
+      const identity = root.WeeklyVegasDom.readRow(row);
+      return identity && isStarterSlot(identity.slot) ? [identity] : [];
     });
   }
   function teamName(container, table) {
@@ -29,9 +25,7 @@
       const tables = Array.from(scope.querySelectorAll('table')).filter(t => Number.isFinite(weekFor(t)));
       if (tables.length === 2) return tables.map(table => ({ name: teamName(null, table), week: weekFor(table), players: playersFor(table) }));
     }
-
-    // Live and postgame overview: each matchupTable contains its own team label and a
-    // single table containing starters, bench, and IR. Filter by ESPN's slot column.
+    // Live and postgame overview: each matchupTable has its own team label and one table of starters, bench and IR.
     const containers = Array.from(document.querySelectorAll('.boxscore-overview .matchupTable, .matchupTable'));
     const seen = new Set();
     const teams = [];
@@ -47,13 +41,12 @@
     }
     return teams.length === 2 ? teams : [];
   }
-  function summarize(team, data) {
-    const players = team.players.map(identity => {
-      const candidate = root.WeeklyVegas.match(data?.players || [], identity);
-      const matched = candidate && (!identity.position || candidate.position === identity.position) ? candidate : null;
-      return { ...identity, points: root.WeeklyVegas.projection(matched).points, projectionPlayer: matched };
-    });
-    return { ...team, players, total: players.reduce((s, p) => s + (p.points ?? 0), 0), covered: players.filter(p => p.points !== null).length, complete: players.length > 0 && players.every(p => p.points !== null) };
+  function summarize(team, ctx) {
+    const E = root.WeeklyVegasEstimates;
+    const players = team.players.map(identity => identity.empty ? { ...identity, points: null, sd: null } : E.project(identity, ctx));
+    const stats = E.summarize(players);
+    // total = projected points; complete = every starter has a projection.
+    return { ...team, players, ...stats, total: stats.mean, complete: stats.count > 0 && stats.covered + players.filter(p => p.bye || p.out).length === stats.count };
   }
   root.WeeklyVegasMatchup = { read, summarize, isStarterSlot };
 })(globalThis);

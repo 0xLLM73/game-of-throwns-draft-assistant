@@ -25,11 +25,29 @@
     for (const p of rows) {
       if (p.week !== week || !Number.isFinite(p.halfPprPoints)) throw Error("Provider returned missing or mixed-week projections.");
     }
-    return root.WeeklyVegas.validate({ season, week, scoring: "half-ppr", source: "Parlay Savant · weekly Vegas props", updatedAt: now.toISOString(), timestampKind: "retrieved", players: rows.map(p => {
+    // The provider can list one player twice (e.g. old and new team after a signing), which used to
+    // make validate() reject the whole refresh. Keep the copy that has lines, otherwise the first.
+    const espnIdOf = p => p.playerImageUrl?.match(/\/players\/full\/(\d+)\.png/)?.[1];
+    const byId = new Map();
+    for (const p of rows) { const id = espnIdOf(p); if (id) byId.set(id, [...(byId.get(id) || []), p]); }
+    const kept = rows.filter(p => {
+      const group = byId.get(espnIdOf(p));
+      if (!group || group.length < 2) return true;
+      const withLines = group.filter(g => g.rowStatus !== "no_line");
+      return (withLines.length === 1 ? withLines[0] : group[0]) === p;
+    });
+    return root.WeeklyVegas.validate({ season, week, scoring: "half-ppr", source: "Parlay Savant · weekly Vegas props", updatedAt: now.toISOString(), timestampKind: "retrieved", players: kept.map(p => {
       const kickoff = p.startsAt ? new Date(p.startsAt) : null;
       const seasonDate = kickoff && (kickoff.getUTCFullYear() === season || (kickoff.getUTCFullYear() === season + 1 && kickoff.getUTCMonth() === 0));
       const validKickoff = kickoff && Number.isFinite(kickoff.getTime()) && seasonDate ? kickoff.toISOString() : null;
-      return { name: p.playerName, position: p.position, team: p.team, espnId: p.playerImageUrl?.match(/\/players\/full\/(\d+)\.png/)?.[1], halfPprPoints: p.halfPprPoints, kickoff: validKickoff, note: validKickoff ? "" : "Game time unavailable; confirm ESPN lineup lock before making a change." };
+      // "no_line" rows report 0 points only because no props are posted yet; that is not a projection.
+      const noLine = p.rowStatus === "no_line";
+      const missing = Array.isArray(p.missingLines) ? p.missingLines : [];
+      const notes = [];
+      if (noLine) notes.push("No Vegas lines posted yet");
+      else if (missing.length) notes.push(`Partial: no ${missing.join(", ")} line${missing.length > 1 ? "s" : ""} posted, so this is likely low`);
+      if (!validKickoff && !noLine) notes.push("Game time unavailable; confirm ESPN lineup lock before making a change.");
+      return { name: p.playerName, position: p.position, team: p.team, espnId: espnIdOf(p), halfPprPoints: noLine ? null : p.halfPprPoints, unavailable: noLine, partial: !noLine && missing.length > 0, tdExp: Number.isFinite(p.touchdowns) ? p.touchdowns : null, passTdExp: Number.isFinite(p.passingTouchdowns) ? p.passingTouchdowns : null, kickoff: validKickoff, note: notes.join(" · ") };
     }) });
   }
   root.WeeklyVegasSource = { parse };

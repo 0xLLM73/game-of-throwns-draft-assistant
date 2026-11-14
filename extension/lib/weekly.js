@@ -21,12 +21,13 @@
       if (p.halfPprPoints == null && !Object.keys(stats).length && !p.unavailable) throw Error(`Missing projection for ${p.name}`);
       for (const field of ["impliedTeamTotal", "gameOverUnder", "teamSpread"]) if (p[field] != null && !number(p[field])) throw Error(`Invalid ${field} for ${p.name}`);
       return { name: p.name.trim(), position: p.position, team: String(p.team || ""), espnId: p.espnId ? String(p.espnId) : null, halfPprPoints: p.halfPprPoints ?? null, stats, unavailable: Boolean(p.unavailable), note: String(p.note || ""), kickoff: p.kickoff && Number.isFinite(Date.parse(p.kickoff)) ? new Date(p.kickoff).toISOString() : null,
-        impliedTeamTotal: p.impliedTeamTotal ?? null, gameOverUnder: p.gameOverUnder ?? null, teamSpread: p.teamSpread ?? null, oddsProvider: String(p.oddsProvider || ""), opponent: String(p.opponent || "") };
+        impliedTeamTotal: p.impliedTeamTotal ?? null, gameOverUnder: p.gameOverUnder ?? null, teamSpread: p.teamSpread ?? null, oddsProvider: String(p.oddsProvider || ""), opponent: String(p.opponent || ""),
+        tdExp: number(p.tdExp) ? p.tdExp : null, passTdExp: number(p.passTdExp) ? p.passTdExp : null, partial: Boolean(p.partial) };
     });
     return { season: input.season, week: input.week, scoring: "half-ppr", source: input.source, updatedAt: new Date(input.updatedAt).toISOString(), timestampKind: input.timestampKind === "retrieved" ? "retrieved" : "source", players };
   }
   function projection(player) {
-    if (!player || player.unavailable) return { points: null, detail: player?.unavailable ? "Unavailable / bye" : "No weekly Vegas projection" };
+    if (!player || player.unavailable) return { points: null, detail: player?.unavailable ? "No projection" : "No weekly Vegas projection" };
     if (number(player.halfPprPoints)) return { points: player.halfPprPoints, detail: "Provider half-PPR projection" };
     const stats = player.stats || {};
     const required = player.position === "QB" ? ["passingYards", "passingTDs", "interceptions", "rushingYards", "rushingTDs"] : ["rushingYards", "rushingTDs", "receptions", "receivingYards", "receivingTDs"];

@@ -76,6 +76,20 @@ The maintainer's August 28 draft-day board uses the August 26 local provider sna
 
 The example JSON is synthetic and exists only to document the input schema. It is not a usable fantasy ranking board.
 
+## Weekly Vegas lineup (v0.13)
+
+- **Fixes:** a player listed twice by Parlay Savant no longer rejects the whole refresh; players with no posted lines show as unavailable instead of 0 points, and partially posted lines are flagged as likely low. ESPN stopped accepting scoreboard date-range queries, so the schedule now merges the `dates=<season>` and `dates=<season+1>` responses. Injury tags are read from `.playerinfo__injurystatus`.
+- **K and D/ST estimates** from ESPN's game odds: kickers scale with their team's implied total (adjusted for wind, heavy precipitation and cold); defenses scale inversely with the opponent's implied total. Labeled "Estimate"; tuned to standard ESPN scoring.
+- **Lineup optimizer** picks the best legal lineup for the unlocked slots (locked and Out players are respected) instead of one-for-one swaps.
+- **Win probability** on the matchup page (normal approximation from projections and per-player spread), and a **strategy** setting on My Team: Auto leans safe when favored and boom-or-bust when an underdog.
+- **ESPN projection fallback** when Vegas lines are missing or partial, labeled "ESPN".
+- **Weather and venue:** dome/outdoor from ESPN, ESPN's forecast summary, and wind/precipitation/temperature over the game window from Open-Meteo for open-air stadiums.
+- **Inactive alerts:** desktop notifications 85 minutes before each kickoff window with your starters, and immediately when a starter is marked Out.
+- **Waivers:** a Streamers filter (QB, TE, K, D/ST) and a ceiling sort.
+- Redesigned panel that collapses to a pill and follows the week ESPN is displaying.
+
+New permissions: `notifications` and `https://api.open-meteo.com/*`.
+
 ## Weekly Vegas lineup (v0.11)
 
 The **Add Players** page shows a weekly Vegas waiver-wire board sorted by projected points for available players on the currently loaded ESPN page. It follows ESPN position/search filters and pagination; it does not crawl the full pool or retain stale availability from other pages. FA/waiver status and injuries are displayed, rostered players excluded, and missing projections stay blank. Weekly points are not season-long value or a waiver spending recommendation. No acquisitions are submitted.

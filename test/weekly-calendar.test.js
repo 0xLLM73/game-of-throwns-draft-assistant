@@ -53,3 +53,15 @@ test("automatic worker throttles refreshes and keeps old weeks when next week is
     assert.equal(values.weeklyVegasDatasets["2026:2"], undefined);
   } finally { Date.now = realNow; globalThis.fetch = realFetch; }
 });
+test("keeps per-team game details: opponent, kickoff, dome flag, forecast and implied totals", () => {
+  const f = fixture();
+  f.events[9] = { ...f.events[9], id: "g10", weather: { displayValue: "Rain", temperature: 41 }, competitions: [{ venue: { fullName: "Lambeau Field", indoor: false, address: { city: "Green Bay" } },
+    competitors: [{ homeAway: "home", team: { abbreviation: "GB" } }, { homeAway: "away", team: { abbreviation: "MIN" } }], odds: [{ overUnder: 41.5, spread: -3, provider: { name: "Book" } }] }] };
+  f.events[10] = { ...f.events[10], id: "g11", competitions: [{ venue: { fullName: "SoFi Stadium", indoor: false }, competitors: [{ homeAway: "home", team: { abbreviation: "LAR" } }, { homeAway: "away", team: { abbreviation: "SF" } }] }] };
+  const c = C.build(f, 2026);
+  const gb = C.gamesForWeek(c, 10).GB;
+  assert.equal(gb.opponent, "MIN"); assert.equal(gb.home, true); assert.equal(gb.indoor, false);
+  assert.equal(gb.impliedTeamTotal, 22.25); assert.equal(gb.forecast.summary, "Rain");
+  assert.equal(C.gamesForWeek(c, 10).MIN.impliedTeamTotal, 19.25);
+  assert.equal(C.gamesForWeek(c, 11).SF.indoor, true, "SoFi's canopy counts as covered");
+});

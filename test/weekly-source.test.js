@@ -49,3 +49,22 @@ test("refresh failures preserve cached projections and return a useful error", a
     assert.equal(values.weeklyVegasDatasets["2026:1"].players.length, 6);
   } finally { globalThis.fetch = fetchBefore; }
 });
+test("rows without posted lines become unavailable instead of zero-point projections", () => {
+  const data = pageData();
+  data.initialRows[0] = { ...data.initialRows[0], halfPprPoints: 0, rowStatus: "no_line", missingLines: ["Rush Yds", "TD"] };
+  data.initialRows[1] = { ...data.initialRows[1], rowStatus: "ok", missingLines: ["Rec", "Rec Yds"] };
+  const result = WeeklyVegasSource.parse(html(data), 2026, 1, now);
+  assert.equal(result.players[0].unavailable, true);
+  assert.equal(WeeklyVegas.projection(result.players[0]).points, null);
+  assert.match(result.players[0].note, /No Vegas lines/);
+  assert.equal(result.players[1].partial, true);
+  assert.match(result.players[1].note, /Rec, Rec Yds/);
+});
+test("a player listed twice by the provider no longer fails the whole refresh", () => {
+  const data = pageData();
+  const dupe = { ...data.initialRows[0], team: "OLD", halfPprPoints: 0, rowStatus: "no_line", missingLines: ["TD"] };
+  data.initialRows.push(dupe);
+  const result = WeeklyVegasSource.parse(html(data), 2026, 1, now);
+  assert.equal(result.players.length, 6);
+  assert.equal(result.players.find(p => p.espnId === "1000").team, "EX");
+});

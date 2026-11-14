@@ -1,17 +1,18 @@
 "use strict";
-if (typeof importScripts === "function") importScripts("lib/weekly.js", "lib/weekly-source.js", "lib/weekly-calendar.js");
+if (typeof importScripts === "function") importScripts("lib/weekly.js", "lib/weekly-source.js", "lib/weekly-calendar.js", "lib/weekly-weather.js");
 
 let weeklyAutoInFlight = null;
 async function downloadWeeklyCalendar(season, now = Date.now()) {
-  const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${season}0801-${season + 1}0215&limit=1000`;
-  // Range responses include January games but omit ESPN's week calendar.
-  const urls = [url, `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${season}&seasontype=2&limit=1000`];
-  const [games, metadata] = await Promise.all(urls.map(async endpoint => {
+  // ESPN groups "dates=YYYY" by calendar year, so the season's January games live in the next year's response.
+  // (ESPN stopped accepting date-range queries in Nov 2026.)
+  const urls = [season, season + 1].map(year => `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${year}&seasontype=2&limit=1000`);
+  const [metadata, january] = await Promise.all(urls.map(async endpoint => {
     const response = await fetch(endpoint, { credentials: "omit", cache: "no-store", signal: AbortSignal.timeout(15000) });
     if (!response.ok) throw Error(`ESPN schedule HTTP ${response.status}`);
     return response.json();
   }));
-  const cached = { calendar: globalThis.WeeklyVegasCalendar.build({ ...metadata, events: games.events }, season), fetchedAt: now };
+  const events = new Map([...(metadata.events || []), ...(january.events || [])].map(e => [e.id, e]));
+  const cached = { calendar: globalThis.WeeklyVegasCalendar.build({ ...metadata, events: [...events.values()] }, season), fetchedAt: now };
   await chrome.storage.local.set({ weeklyVegasCalendar: cached });
   return cached;
 }
@@ -54,10 +55,62 @@ async function automaticWeekly() {
       }
       await chrome.storage.local.set({ weeklyVegasAutoAttempts: attempts });
     }
+    await refreshWeather(cached.calendar, selected.week).catch(() => {});
     return { ok: true, ...selected, warning: [scheduleWarning, projectionWarning].filter(Boolean).join(" ") };
   })();
   try { return await weeklyAutoInFlight; } finally { weeklyAutoInFlight = null; }
 }
+
+// Forecasts change slowly; refetch at most every 3 hours unless the user forces a refresh.
+async function refreshWeather(calendar, week, force = false) {
+  const key = `${calendar.season}:${week}`;
+  const stored = (await chrome.storage.local.get("weeklyVegasWeather")).weeklyVegasWeather || {};
+  if (!force && stored[key] && Date.now() - stored[key].fetchedAt < 3 * 3600000) return stored[key];
+  const byTeam = await globalThis.WeeklyVegasWeather.fetchForWeek(globalThis.WeeklyVegasCalendar.gamesForWeek(calendar, week));
+  // Keep only recent weeks so storage doesn't grow all season.
+  const next = Object.fromEntries(Object.entries(stored).filter(([k]) => k.startsWith(`${calendar.season}:`) && Math.abs(Number(k.split(":")[1]) - week) <= 1));
+  next[key] = { fetchedAt: Date.now(), byTeam };
+  await chrome.storage.local.set({ weeklyVegasWeather: next });
+  return next[key];
+}
+
+// Inactives are announced ~90 minutes before kickoff. Remind the user about starters in each kickoff window.
+const INACTIVE_PREFIX = "got-inactives:";
+async function scheduleInactiveAlerts(message) {
+  const settings = await chrome.storage.local.get("weeklyVegasAlerts");
+  const enabled = settings.weeklyVegasAlerts !== false;
+  const existing = (await chrome.alarms.getAll()).filter(a => a.name.startsWith(INACTIVE_PREFIX));
+  await Promise.all(existing.map(a => chrome.alarms.clear(a.name)));
+  const starters = (message.starters || []).filter(s => s && s.name && Number.isFinite(Date.parse(s.kickoff)));
+  await chrome.storage.local.set({ weeklyVegasAlertRoster: { teamUrl: String(message.teamUrl || ""), starters } });
+  if (!enabled) return { ok: true, scheduled: 0 };
+  const kickoffs = [...new Set(starters.map(s => Date.parse(s.kickoff)))].filter(t => t - 85 * 60000 > Date.now());
+  for (const kickoff of kickoffs) await chrome.alarms.create(`${INACTIVE_PREFIX}${kickoff}`, { when: kickoff - 85 * 60000 });
+  return { ok: true, scheduled: kickoffs.length };
+}
+async function fireInactiveAlert(name) {
+  const kickoff = Number(name.slice(INACTIVE_PREFIX.length));
+  const { weeklyVegasAlertRoster: roster } = await chrome.storage.local.get("weeklyVegasAlertRoster");
+  const players = (roster?.starters || []).filter(s => Date.parse(s.kickoff) === kickoff);
+  if (!players.length) return;
+  const time = new Date(kickoff).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  await notify(`inactives:${kickoff}`, `Inactives are out for ${time} games`, `Check ${players.map(p => p.name).join(", ")} before kickoff.`, roster.teamUrl);
+}
+async function notify(id, title, message, url) {
+  const { weeklyVegasNotified: sent = {} } = await chrome.storage.local.get("weeklyVegasNotified");
+  if (sent[id]) return { ok: true, duplicate: true };
+  sent[id] = Date.now();
+  for (const [key, at] of Object.entries(sent)) if (Date.now() - at > 14 * 86400000) delete sent[key];
+  await chrome.storage.local.set({ weeklyVegasNotified: sent, [`weeklyVegasNotifyUrl:${id}`]: url || "" });
+  await chrome.notifications.create(id, { type: "basic", iconUrl: "icons/icon128.png", title, message, priority: 2 });
+  return { ok: true };
+}
+chrome.notifications?.onClicked.addListener(async (id) => {
+  const key = `weeklyVegasNotifyUrl:${id}`;
+  const url = (await chrome.storage.local.get(key))[key];
+  if (/^https:\/\/fantasy\.espn\.com\//.test(url || "")) await chrome.tabs.create({ url });
+  chrome.notifications.clear(id);
+});
 
 let weeklyRefreshInFlight = false;
 async function refreshWeekly(message) {
@@ -86,6 +139,7 @@ async function refreshWeekly(message) {
     const attempts = stored.weeklyVegasAutoAttempts || {};
     attempts[key] = { nextAt: Date.now() + 3600000, error: "" };
     await chrome.storage.local.set({ weeklyVegasDatasets: datasets, weeklyVegasBackups: backups, weeklyVegasAutoAttempts: attempts });
+    if (schedule?.calendar?.season === season) await refreshWeather(schedule.calendar, week, true).catch(() => {});
     return { ok: true, count: data.players.length };
   } finally { weeklyRefreshInFlight = false; }
 }
@@ -239,6 +293,7 @@ async function removeKeepAwakeTab(tabId) {
 }
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name.startsWith(INACTIVE_PREFIX)) { await fireInactiveAlert(alarm.name).catch(() => {}); return; }
   if (!alarm.name.startsWith(AUTO_ALARM_PREFIX)) return;
   await fireAutoAlarm(alarm.name);
 });
@@ -252,16 +307,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     automaticWeekly().then(sendResponse, error => sendResponse({ ok: false, reason: error.message }));
     return true;
   }
+  if (message.type === "got-weekly:open") {
+    chrome.tabs.create({ url: chrome.runtime.getURL("weekly.html") }).then(() => sendResponse({ ok: true }), error => sendResponse({ ok: false, reason: error.message }));
+    return true;
+  }
+  if (message.type === "got-weekly:roster") {
+    scheduleInactiveAlerts(message).then(sendResponse, error => sendResponse({ ok: false, reason: error.message }));
+    return true;
+  }
+  if (message.type === "got-weekly:notify") {
+    chrome.storage.local.get("weeklyVegasAlerts").then(s => s.weeklyVegasAlerts === false ? { ok: true, disabled: true } : notify(String(message.id), String(message.title), String(message.message), String(message.url || "")))
+      .then(sendResponse, error => sendResponse({ ok: false, reason: error.message }));
+    return true;
+  }
   if (message.type === "got-weekly:refresh") {
     refreshWeekly(message).then(sendResponse, error => sendResponse({ ok: false, reason: error.message }));
     return true;
   }
   if (!message?.type?.startsWith("got-draft-lock:") && !message?.type?.startsWith("got-auto-alarm:") && message?.type !== "got-keep-awake:set") return false;
   lockQueue = lockQueue.catch(() => {}).then(async () => {
-    if (message.type === "got-weekly:open") {
-      await chrome.tabs.create({ url: chrome.runtime.getURL("weekly.html") });
-      return { ok: true };
-    }
     if (message.type === "got-keep-awake:set") return setKeepAwake(message, sender);
     if (message.type === "got-auto-alarm:schedule") return scheduleAutoAlarm(message, sender);
     if (message.type === "got-auto-alarm:clear") return clearAutoAlarm(message, sender);

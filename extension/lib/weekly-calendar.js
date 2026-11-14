@@ -22,23 +22,42 @@
       return { week, rolloverAt, boundary: monday.length ? "first Monday-night kickoff" : "ESPN week end (no Monday-night kickoff scheduled)" };
     }).sort((a, b) => a.week - b.week);
     if (weeks.some((w, i) => w.week !== i + 1 || (i && w.rolloverAt <= weeks[i - 1].rolloverAt))) throw Error("ESPN week boundaries are inconsistent.");
-    const teamTotals = {};
+    const teamTotals = {}, games = {};
     for (const event of payload.events || []) {
       if (event.season?.year !== season || event.season?.type !== 2 || !Number.isInteger(event.week?.number)) continue;
       const competition = event.competitions?.[0];
       const odds = competition?.odds?.find(o => Number.isFinite(o.overUnder) && Number.isFinite(o.spread));
       const home = competition?.competitors?.find(c => c.homeAway === "home")?.team?.abbreviation;
       const away = competition?.competitors?.find(c => c.homeAway === "away")?.team?.abbreviation;
-      if (!odds || !home || !away) continue;
+      if (!home || !away) continue;
+      const venue = competition.venue || {};
+      const game = {
+        id: String(event.id || ""), kickoff: Number.isFinite(Date.parse(event.date)) && competition.timeValid !== false ? new Date(event.date).toISOString() : null,
+        venue: venue.fullName || "", city: venue.address?.city || "", country: venue.address?.country || "",
+        // ESPN marks SoFi as outdoor, but its fixed canopy keeps wind and rain off the field.
+        indoor: venue.indoor === true || /sofi stadium/i.test(venue.fullName || ""),
+        forecast: event.weather ? { summary: String(event.weather.displayValue || ""), tempF: Number.isFinite(event.weather.temperature) ? event.weather.temperature : null } : null,
+      };
+      games[`${event.week.number}:${home}`] = { ...game, team: home, opponent: away, home: true };
+      games[`${event.week.number}:${away}`] = { ...game, team: away, opponent: home, home: false };
+      if (!odds) continue;
       const common = { gameOverUnder: odds.overUnder, provider: odds.provider?.name || "ESPN odds provider" };
       teamTotals[`${event.week.number}:${home}`] = { ...common, team: home, opponent: away, teamSpread: odds.spread, impliedTeamTotal: (odds.overUnder - odds.spread) / 2 };
       teamTotals[`${event.week.number}:${away}`] = { ...common, team: away, opponent: home, teamSpread: -odds.spread, impliedTeamTotal: (odds.overUnder + odds.spread) / 2 };
+      Object.assign(games[`${event.week.number}:${home}`], teamTotals[`${event.week.number}:${home}`]);
+      Object.assign(games[`${event.week.number}:${away}`], teamTotals[`${event.week.number}:${away}`]);
     }
-    return { season, weeks, endsAt: Date.parse(calendar.endDate), teamTotals };
+    return { season, weeks, endsAt: Date.parse(calendar.endDate), teamTotals, games };
+  }
+  // All games for one week, keyed by team abbreviation.
+  function gamesForWeek(calendar, week) {
+    const out = {};
+    for (const [key, game] of Object.entries(calendar?.games || {})) if (key.startsWith(`${week}:`)) out[game.team] = game;
+    return out;
   }
   function select(calendar, now = Date.now()) {
     const current = calendar.weeks.find(w => now < w.rolloverAt) || calendar.weeks.at(-1);
     return { season: calendar.season, week: current.week, rolloverAt: current.rolloverAt, boundary: current.boundary, ended: now >= calendar.endsAt };
   }
-  root.WeeklyVegasCalendar = { seasonAt, build, select };
+  root.WeeklyVegasCalendar = { seasonAt, build, select, gamesForWeek };
 })(globalThis);
